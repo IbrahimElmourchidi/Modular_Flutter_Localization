@@ -2,7 +2,7 @@
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/UtaniumOrg.modular-flutter-l10n?label=VS%20Code%20Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/UtaniumOrg.modular-flutter-l10n?color=green)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
-[![GitHub](https://img.shields.io/github/stars/IbrahimElmourchidi/modular_l10n?style=social)](https://github.com/IbrahimElmourchidi/modular_l10n)
+[![GitHub](https://img.shields.io/github/stars/IbrahimElmourchidi/Modular_Flutter_Localization?style=social)](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A VS Code extension for **feature-based, modular localization** in Flutter projects. Keep your translations organized by feature modules instead of one massive ARB file.
@@ -898,7 +898,7 @@ MaterialApp(
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please visit our [GitHub repository](https://github.com/IbrahimElmourchidi/modular_l10n).
+Contributions are welcome! Please visit our [GitHub repository](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization).
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)

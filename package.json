@@ -2,7 +2,7 @@
   "name": "modular-flutter-l10n",
   "displayName": "Modular Flutter Localization",
   "description": "A modular approach to Flutter localization - organize translations by feature/module with auto-generation, RTL support, and seamless module reuse across projects.",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "UtaniumOrg",
   "author": {
     "name": "Ibrahim Elmourchidi",
@@ -16,12 +16,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/IbrahimElmourchidi/modular_l10n"
+    "url": "https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization"
   },
   "bugs": {
-    "url": "https://github.com/IbrahimElmourchidi/modular_l10n/issues"
+    "url": "https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/issues"
   },
-  "homepage": "https://github.com/IbrahimElmourchidi/modular_l10n#readme",
+  "homepage": "https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization#readme",
   "engines": {
     "vscode": "^1.74.0"
   },
