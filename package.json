@@ -1,0 +1,180 @@
+{
+  "name": "modular-flutter-l10n",
+  "displayName": "Modular Flutter Localization",
+  "description": "A modular approach to Flutter localization - organize translations by feature/module with auto-generation, RTL support, and seamless module reuse across projects.",
+  "version": "1.0.6",
+  "publisher": "UtaniumOrg",
+  "author": {
+    "name": "Ibrahim Elmourchidi",
+    "url": "https://github.com/IbrahimElmourchidi"
+  },
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1E88E5",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IbrahimElmourchidi/modular_l10n"
+  },
+  "bugs": {
+    "url": "https://github.com/IbrahimElmourchidi/modular_l10n/issues"
+  },
+  "homepage": "https://github.com/IbrahimElmourchidi/modular_l10n#readme",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Other"
+  ],
+  "keywords": [
+    "flutter",
+    "dart",
+    "localization",
+    "l10n",
+    "i18n",
+    "arb",
+    "intl",
+    "modular",
+    "internationalization",
+    "translation",
+    "rtl",
+    "arabic",
+    "multilingual"
+  ],
+  "activationEvents": [
+    "onCommand:modularL10n.createModule",
+    "onCommand:modularL10n.addKey",
+    "onCommand:modularL10n.generate",
+    "workspaceContains:**/l10n/*.arb",
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "modularL10n.generate",
+        "title": "Generate Translations",
+        "category": "Modular L10n"
+      },
+      {
+        "command": "modularL10n.addKey",
+        "title": "Add Translation Key",
+        "category": "Modular L10n"
+      },
+      {
+        "command": "modularL10n.createModule",
+        "title": "Create New Module",
+        "category": "Modular L10n"
+      },
+      {
+        "command": "modularL10n.addL10nFolder",
+        "title": "New L10n Module"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "modularL10n.addL10nFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "1_modification@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "modularL10n.generate",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "modularL10n.addKey",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "modularL10n.createModule",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "modularL10n.addL10nFolder",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Modular Flutter L10n",
+      "properties": {
+        "modularL10n.outputPath": {
+          "type": "string",
+          "default": "lib/generated/l10n",
+          "description": "Output path for generated Dart files (relative to workspace root)"
+        },
+        "modularL10n.supportedLocales": {
+          "type": "array",
+          "default": [
+            "en",
+            "ar"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "List of supported locale codes (e.g., 'en', 'ar', 'de')"
+        },
+        "modularL10n.defaultLocale": {
+          "type": "string",
+          "default": "en",
+          "description": "Default locale code used as fallback"
+        },
+        "modularL10n.arbFilePattern": {
+          "type": "string",
+          "default": "**/l10n/*.arb",
+          "description": "Glob pattern to find ARB files in your project"
+        },
+        "modularL10n.watchMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Watch for file changes and auto-generate translations"
+        },
+        "modularL10n.generateCombinedArb": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate combined ARB files for all modules"
+        },
+        "modularL10n.className": {
+          "type": "string",
+          "default": "S",
+          "description": "Name of the generated main localization class"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "installLocal": "code --install-extension modular-flutter-l10n-1.0.5.vsix --force",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.0.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^5.45.0",
+    "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/test-electron": "^2.2.0",
+    "@vscode/vsce": "^2.22.0",
+    "eslint": "^8.28.0",
+    "mocha": "^10.1.0",
+    "typescript": "^4.9.3"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "glob": "^8.0.3"
+  }
+}
