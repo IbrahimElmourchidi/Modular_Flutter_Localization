@@ -1,21 +1,73 @@
-.vscode/**
-.vscode-test/**
-.gitignore
-.yarnrc
-vsc-extension-quickstart.md
-**/tsconfig.json
-**/.eslintrc.json
-**/*.map
-.eslintrc.json
-tsconfig.json
-tslint.json
+# VS Code Extension - Files to Exclude from Package
+
+# Source files (only compiled output needed)
 src/**
-!out/**
-node_modules/**/test/**
+tsconfig.json
+.vscode-test/**
+.vscode/**
+
+# Build scripts
+build.sh
+build.bat
+webpack.config.js
+
+# Dependencies
+node_modules/**
+
+# Git
+.git/**
+.gitignore
+.gitattributes
+
+# GitHub
+.github/**
+
+# Documentation (keep README.md, LICENSE, CHANGELOG.md)
+docs/**
+*.md
+!README.md
+!CHANGELOG.md
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
 test/**
-**/*.ts
-!out/**/*.js
+
+# Development files
+.eslintrc.json
+.prettierrc
+.editorconfig
+.env
+.env.*
+
+# Build artifacts
 *.vsix
-.git
-.github
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS files
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/**
+*.iml
+*.sublime-*
+
+# Temporary files
+tmp/**
+temp/**
+*.tmp
+
+# Coverage
+coverage/**
+.nyc_output/**
+
+# Source maps (optional - remove if you want source maps in package)
+**/*.map

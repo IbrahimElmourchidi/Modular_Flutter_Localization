@@ -95,3 +95,8 @@ coverage/
 
 # Test output
 .test_coverage/
+accumulated_files.txt
+
+
+docs/**
+build.sh

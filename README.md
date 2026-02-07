@@ -1,365 +1,331 @@
-# Modular Flutter Localization
+# Modular Flutter L10n
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/UtaniumOrg.modular-flutter-l10n?label=VS%20Code%20Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/UtaniumOrg.modular-flutter-l10n?color=green)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
-[![GitHub](https://img.shields.io/github/stars/IbrahimElmourchidi/Modular_Flutter_Localization?style=social)](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Modular Flutter L10n Logo](https://raw.githubusercontent.com/IbrahimElmourchidi/Modular_Flutter_Localization/dde6063290c7b91c4400c993a4215772b8557436/images/icon.png)
 
-A VS Code extension for **feature-based, modular localization** in Flutter projects. Keep your translations organized by feature modules instead of one massive ARB file.
+> **Scale your Flutter localization with modular architecture** – Organize translations by feature while maintaining full compatibility with Flutter's official Intl library.
 
-```
-lib/
-├── features/
-│   ├── auth/
-│   │   └── l10n/           ← Auth translations
-│   │       ├── auth_en.arb
-│   │       └── auth_ar.arb
-│   └── home/
-│       └── l10n/           ← Home translations
-│           ├── home_en.arb
-│           └── home_ar.arb
-└── generated/l10n/         ← Auto-generated code
-```
+[![Version](https://img.shields.io/vscode-marketplace/v/UtaniumOrg.modular-flutter-l10n)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
+[![Installs](https://img.shields.io/vscode-marketplace/i/UtaniumOrg.modular-flutter-l10n)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
+[![Ratings](https://img.shields.io/vscode-marketplace/r/UtaniumOrg.modular-flutter-l10n)](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?logo=github)](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization)
 
 ---
 
-## ✨ Features
+## ✨ Why Modular Localization?
 
-| Feature | Description |
-|---------|-------------|
-| 📁 **Modular Architecture** | Organize translations by feature/module |
-| 🔍 **Auto-Detect Locales** | Automatically detects locales from ARB files |
-| 🖱️ **Context Menu** | Right-click folder → "New L10n Module" |
-| 👁️ **Watch Mode** | Auto-regenerate on ARB file changes |
-| 🌍 **170+ Locales** | Comprehensive locale validation |
-| 📝 **ICU Syntax** | Full support for plurals, select, etc. |
-| 🔄 **RTL Support** | Arabic, Hebrew, Persian, Urdu, and more |
-| ⚡ **Zero Config** | Works out of the box |
+Traditional Flutter localization stores **all translations in a single namespace**. In large apps, this creates:
 
----
+❌ **Naming collisions** – Need verbose prefixes like `authLoginButton`, `authSignupButton`  
+❌ **Team conflicts** – Multiple developers editing the same massive ARB files  
+❌ **Poor organization** – Hard to find translations for specific features  
+❌ **Tight coupling** – Changes to one feature's strings require regenerating everything
 
-## 📦 Installation
-
-### Step 1: Install the Extension
-
-**Option A: VS Code Marketplace**
-1. Open VS Code
-2. Go to Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`)
-3. Search for **"Modular Flutter Localization"**
-4. Click **Install**
-
-Or install directly: [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=UtaniumOrg.modular-flutter-l10n)
-
-**Option B: Command Line**
-```bash
-code --install-extension UtaniumOrg.modular-flutter-l10n
-```
-
-### Step 2: Add Dependency to Flutter Project
-
-Add `intl` to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  flutter:
-    sdk: flutter
-  intl: ^0.19.0
-```
-
-Then run:
-```bash
-flutter pub get
-```
-
-> **Note:** This extension works **standalone** - no companion package required!
+✅ **Modular L10n solves this** by:
+- Organizing translations by **feature/module** (`auth/`, `settings/`, `payments/`)
+- Generating **type-safe accessors** (`ML.of(context).auth.loginButton`)
+- Supporting **independent locale management** per module
+- **Coexisting peacefully** with Flutter Intl for legacy projects
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Create Your First Module
+### 1. Install Extension
 
-**Option A: Context Menu (Recommended)**
-1. Right-click on any folder (e.g., `lib/features/auth`)
-2. Select **"New L10n Module"**
-3. Enter module name → Done!
+**Via VS Code:**
+1. Open Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`)
+2. Search **"Modular Flutter L10n"**
+3. Click **Install**
 
-**Option B: Manual**
-1. Create folder: `lib/features/auth/l10n/`
-2. Create ARB file: `auth_en.arb`
+**Prerequisites:**
+- [Flutter extension](https://marketplace.visualstudio.com/items?itemName=Dart-Code.flutter) installed
+- Flutter project with `pubspec.yaml`
 
-### 2. Add Translations
+### 2. Initialize Project (One Command!)
 
-```json
-{
-  "@@locale": "en",
-  "@@context": "auth",
+1. Open Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+2. Run: `Modular L10n: Initialize`
+3. Answer prompts:
+   ```
+   Default locale: en
+   First module name: auth
+   Module path: features/auth
+   Generated class name: ML  ← KEEP THIS (avoids Flutter Intl conflicts)
+   ```
 
-  "email": "Email",
-  "password": "Password",
-  "login": "Login",
-  "welcomeBack": "Welcome back, {name}!"
-}
-```
-
-> ⚠️ **Required:** Every ARB file must have `@@locale` and `@@context` properties!
-
-### 3. Generate Code
-
-- **Automatic:** Save any ARB file (watch mode is on by default)
-- **Manual:** `Ctrl+Shift+P` → "Modular L10n: Generate Translations"
-
-### 4. Use in Flutter
-
-```dart
-import 'package:your_app/generated/l10n/l10n.dart';
-
-// Simple usage
-Text(S.auth.email)           // "Email"
-Text(S.auth.login)           // "Login"
-
-// With parameters
-Text(S.auth.welcomeBack('Ahmed'))  // "Welcome back, Ahmed!"
-```
+**What happens:**
+- ✅ Creates `lib/features/auth/l10n/auth_en.arb`
+- ✅ Adds config to `pubspec.yaml`
+- ✅ Generates Dart files in `lib/generated/modular_l10n/`
+- ✅ Sets up everything needed for localization
 
 ---
 
-## 📖 Complete Usage Guide (Without Companion Package)
-
-This section shows you how to use the extension with **only** the `intl` package - no additional dependencies needed.
-
-### Project Structure
+## 📁 Project Structure
 
 ```
 lib/
 ├── features/
 │   ├── auth/
-│   │   ├── l10n/
-│   │   │   ├── auth_en.arb
-│   │   │   └── auth_ar.arb
-│   │   ├── cubit/
-│   │   │   └── auth_cubit.dart
-│   │   └── screens/
-│   │       └── login_screen.dart
-│   └── home/
-│       ├── l10n/
-│       │   ├── home_en.arb
-│       │   └── home_ar.arb
-│       └── screens/
-│           └── home_screen.dart
+│   │   └── l10n/
+│   │       ├── auth_en.arb      ← English auth translations
+│   │       └── auth_ar.arb      ← Arabic auth translations
+│   ├── home/
+│   │   └── l10n/
+│   │       ├── home_en.arb
+│   │       └── home_ar.arb
+│   └── settings/
+│       └── l10n/
+│           ├── settings_en.arb
+│           └── settings_ar.arb
 ├── generated/
-│   └── l10n/                    ← Auto-generated
-│       ├── s.dart
-│       ├── auth_l10n.dart
+│   └── modular_l10n/            ← Auto-generated (DON'T EDIT!)
+│       ├── ml.dart              ← Main entry point
+│       ├── auth_l10n.dart       ← Auth module class
 │       ├── home_l10n.dart
+│       ├── settings_l10n.dart
 │       ├── app_localization_delegate.dart
-│       └── l10n.dart
+│       └── intl/                ← Message lookup tables
+│           ├── modular_messages_all.dart
+│           ├── modular_messages_en.dart
+│           └── modular_messages_ar.dart
 └── main.dart
 ```
 
-### ARB File Format
+---
 
-**lib/features/auth/l10n/auth_en.arb**
+## 📝 ARB File Format (Critical!)
+
+Every ARB file **MUST** include two metadata properties:
+
 ```json
 {
   "@@locale": "en",
   "@@context": "auth",
-
-  "email": "Email",
-  "@email": {
-    "description": "Email field label"
-  },
-
-  "password": "Password",
-  "login": "Login",
-  "signup": "Sign Up",
-  "forgotPassword": "Forgot Password?",
-
-  "welcomeBack": "Welcome back, {name}!",
-  "@welcomeBack": {
-    "placeholders": {
-      "name": {
-        "type": "String",
-        "example": "Ahmed"
-      }
-    }
-  },
-
-  "loginError": "Invalid email or password"
-}
-```
-
-**lib/features/auth/l10n/auth_ar.arb**
-```json
-{
-  "@@locale": "ar",
-  "@@context": "auth",
-
-  "email": "البريد الإلكتروني",
-  "password": "كلمة المرور",
-  "login": "تسجيل الدخول",
-  "signup": "إنشاء حساب",
-  "forgotPassword": "نسيت كلمة المرور؟",
-  "welcomeBack": "مرحباً بعودتك، {name}!",
-  "loginError": "البريد الإلكتروني أو كلمة المرور غير صحيحة"
-}
-```
-
-### Basic Setup (StatefulWidget)
-
-**lib/main.dart**
-```dart
-import 'package:flutter/material.dart';
-import 'generated/l10n/l10n.dart';
-
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  Locale _locale = const Locale('en');
-
-  void changeLocale(Locale locale) {
-    setState(() => _locale = locale);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      
-      // Localization setup
-      locale: _locale,
-      supportedLocales: S.supportedLocales,
-      localizationsDelegates: [
-        S.delegate,
-      ],
-      
-      home: HomeScreen(
-        onLocaleChanged: changeLocale,
-        currentLocale: _locale,
-      ),
-    );
+  
+  "loginButton": "Log In",
+  "emailLabel": "Email Address",
+  "passwordLabel": "Password",
+  
+  "@loginButton": {
+    "description": "Label for login button"
   }
 }
 ```
 
-### Using Cubit for Locale Management
+| Property | Required | Purpose |
+|----------|----------|---------|
+| `@@locale` | ✅ Yes | Locale code (`en`, `ar`, `fr_FR`, `zh_Hans_CN`, etc.) |
+| `@@context` | ✅ Yes | **Module name** – identifies which module owns these translations |
+| `@key` | ❌ Optional | Metadata (description, placeholders, formatting) |
 
-This example shows how to manage locale state using `flutter_bloc`.
+> ⚠️ **Without `@@context`**, the extension **skips the file**. This distinguishes modular ARB files from Flutter Intl's `intl_*.arb` files.
 
-**Step 1: Add flutter_bloc**
+### Supported Locale Formats
+
+The extension validates locales against comprehensive standards:
+
+```
+Simple:     en, ar, fr, de, ja, zh
+Regional:   en_US, ar_EG, fr_CA, zh_CN
+Script:     zh_Hans, zh_Hant, sr_Latn, sr_Cyrl
+Complex:    zh_Hans_CN, zh_Hant_TW, sr_Latn_RS
+```
+
+See full list in [module_scanner.ts](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/blob/main/src/module_scanner.ts#L20-L100).
+
+---
+
+## 🔧 Flutter Setup
+
+### 1. Add Dependencies
+
 ```yaml
+# pubspec.yaml
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   intl: ^0.19.0
-  flutter_bloc: ^8.1.0
 ```
 
-**Step 2: Create LocaleCubit**
+Run:
+```bash
+flutter pub get
+```
 
-**lib/cubit/locale_cubit.dart**
+### 2. Configure MaterialApp
+
 ```dart
-import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'generated/modular_l10n/l10n.dart';
+
+MaterialApp(
+  // Add delegates
+  localizationsDelegates: const [
+    ML.delegate,                              // ← Modular L10n
+    GlobalMaterialLocalizations.delegate,     // ← Material widgets
+    GlobalWidgetsLocalizations.delegate,      // ← Flutter widgets
+    GlobalCupertinoLocalizations.delegate,    // ← Cupertino widgets
+  ],
+  
+  // Supported locales (auto-detected from ARB files)
+  supportedLocales: ML.supportedLocales,
+  
+  // Optional: Set initial locale
+  locale: const Locale('en'),
+  
+  home: MyHomePage(),
+)
+```
+
+**That's it!** No need for `Directionality` wrapper – the delegates handle RTL automatically.
+
+### 3. Platform Configuration (For In-App Switching)
+
+Only needed if you want to **change language without restarting the app**.
+
+#### Android (`android/app/src/main/AndroidManifest.xml`)
+
+```xml
+<activity
+  android:name=".MainActivity"
+  android:configChanges="locale|layoutDirection"  ← Add this
+  android:supportsRtl="true">                      ← Add this for RTL
+  <!-- ... -->
+</activity>
+```
+
+#### iOS (`ios/Runner/Info.plist`)
+
+```xml
+<key>CFBundleLocalizations</key>
+<array>
+  <string>en</string>
+  <string>ar</string>
+  <!-- Add all supported locales -->
+</array>
+```
+
+> **Why?** Without these, the OS restarts your app when locale changes. With them, the change is instant.
+
+---
+
+## 💻 Using Translations in Code
+
+### In Widgets (with BuildContext)
+
+```dart
+// Simple strings
+Text(ML.of(context).auth.loginButton)
+
+// With placeholders
+Text(ML.of(context).auth.welcomeMessage('John'))
+
+// ICU plurals
+Text(ML.of(context).home.messageCount(5))
+// Outputs: "5 messages" (or "1 message" for count=1)
+
+// ICU gender/select
+Text(ML.of(context).profile.greeting('male'))
+// Outputs: "Hello, sir!" (or "Hello, ma'am!" for 'female')
+```
+
+### In Non-Widget Code (Services/Blocs/Cubits)
+
+```dart
+// Access without context
+final message = ML.current.auth.loginButton;
+final greeting = ML.current.auth.welcomeMessage('Sarah');
+
+// Check current locale
+final locale = ML.current.auth.instance; // Returns localized instance
+```
+
+### In-App Language Switching
+
+> 💡 **Note**: This example uses **Cubit** (from `flutter_bloc`), but you can use any state management solution you prefer (Provider, Riverpod, GetX, etc.). The key is to store the locale in state and rebuild `MaterialApp` when it changes.
+
+#### 1. Create Locale Cubit
+
+```dart
+// lib/core/locale/locale_cubit.dart
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LocaleCubit extends Cubit<Locale> {
-  static const String _localeKey = 'app_locale';
+  static const _localeKey = 'app_locale';
   
-  LocaleCubit() : super(const Locale('en'));
+  LocaleCubit() : super(const Locale('en')) {
+    _loadSavedLocale();
+  }
 
-  /// Load saved locale from SharedPreferences
-  Future<void> loadSavedLocale() async {
+  /// Load saved locale from storage on app start
+  Future<void> _loadSavedLocale() async {
     final prefs = await SharedPreferences.getInstance();
-    final languageCode = prefs.getString(_localeKey);
+    final savedLocale = prefs.getString(_localeKey);
     
-    if (languageCode != null) {
-      emit(Locale(languageCode));
+    if (savedLocale != null) {
+      emit(_localeFromString(savedLocale));
     }
   }
 
-  /// Change and persist locale
-  Future<void> changeLocale(Locale locale) async {
+  /// Change locale and persist to storage
+  Future<void> changeLocale(Locale newLocale) async {
+    emit(newLocale);
+    
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_localeKey, locale.languageCode);
-    emit(locale);
+    await prefs.setString(_localeKey, newLocale.toString());
   }
 
-  /// Check if current locale is RTL
-  bool get isRtl {
-    const rtlLanguages = ['ar', 'he', 'fa', 'ur', 'ps', 'sd'];
-    return rtlLanguages.contains(state.languageCode);
-  }
-
-  /// Get text direction
-  TextDirection get textDirection {
-    return isRtl ? TextDirection.rtl : TextDirection.ltr;
+  /// Parse locale from string (e.g., "en_US" -> Locale('en', 'US'))
+  Locale _localeFromString(String localeStr) {
+    final parts = localeStr.split('_');
+    if (parts.length == 1) return Locale(parts[0]);
+    if (parts.length == 2) return Locale(parts[0], parts[1]);
+    return Locale(parts[0], parts[1]);
   }
 }
 ```
 
-**Step 3: Setup in main.dart**
+#### 2. Provide Cubit in App Root
 
-**lib/main.dart**
 ```dart
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'cubit/locale_cubit.dart';
-import 'generated/l10n/l10n.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'core/locale/locale_cubit.dart';
+import 'generated/modular_l10n/l10n.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(
+    BlocProvider(
+      create: (context) => LocaleCubit(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => LocaleCubit()..loadSavedLocale(),
-      child: const AppView(),
-    );
-  }
-}
-
-class AppView extends StatelessWidget {
-  const AppView({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<LocaleCubit, Locale>(
       builder: (context, locale) {
-        final localeCubit = context.read<LocaleCubit>();
-        
         return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          
-          // Localization setup
           locale: locale,
-          supportedLocales: S.supportedLocales,
-          localizationsDelegates: [
-            S.delegate,
+          localizationsDelegates: const [
+            ML.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
           ],
-          
-          // RTL support
-          builder: (context, child) {
-            return Directionality(
-              textDirection: localeCubit.textDirection,
-              child: child!,
-            );
-          },
-          
-          home: const HomeScreen(),
+          supportedLocales: ML.supportedLocales,
+          home: const MyHomePage(),
         );
       },
     );
@@ -367,413 +333,246 @@ class AppView extends StatelessWidget {
 }
 ```
 
-**Step 4: Use in Screens**
+#### 3. Create Language Switcher Widget
 
-**lib/features/home/screens/home_screen.dart**
 ```dart
+// lib/widgets/language_switcher.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../cubit/locale_cubit.dart';
-import '../../../generated/l10n/l10n.dart';
+import '../core/locale/locale_cubit.dart';
+import '../generated/modular_l10n/l10n.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final localeCubit = context.read<LocaleCubit>();
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(S.home.title),
-        actions: [
-          // Language Switcher
-          PopupMenuButton<Locale>(
-            icon: const Icon(Icons.language),
-            onSelected: (locale) => localeCubit.changeLocale(locale),
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: Locale('en'),
-                child: Row(
-                  children: [
-                    Text('🇺🇸'),
-                    SizedBox(width: 8),
-                    Text('English'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: Locale('ar'),
-                child: Row(
-                  children: [
-                    Text('🇸🇦'),
-                    SizedBox(width: 8),
-                    Text('العربية'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Welcome message with parameter
-            Text(
-              S.home.welcomeMessage('Ahmed'),
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 16),
-            
-            // Simple text
-            Text(S.home.description),
-            const SizedBox(height: 24),
-            
-            // Pluralization example
-            Text(S.home.itemCount(0)),  // "No items"
-            Text(S.home.itemCount(1)),  // "1 item"
-            Text(S.home.itemCount(5)),  // "5 items"
-          ],
-        ),
-      ),
-    );
-  }
-}
-```
-
-**Step 5: Using in Auth Module**
-
-**lib/features/auth/screens/login_screen.dart**
-```dart
-import 'package:flutter/material.dart';
-import '../../../generated/l10n/l10n.dart';
-
-class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key});
+class LanguageSwitcher extends StatelessWidget {
+  const LanguageSwitcher({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(S.auth.login),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                labelText: S.auth.email,
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: S.auth.password,
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: TextButton(
-                onPressed: () {},
-                child: Text(S.auth.forgotPassword),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {},
-                child: Text(S.auth.login),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: () {},
-              child: Text(S.auth.signup),
-            ),
-          ],
-        ),
-      ),
+    return BlocBuilder<LocaleCubit, Locale>(
+      builder: (context, currentLocale) {
+        return DropdownButton<Locale>(
+          value: currentLocale,
+          items: ML.supportedLocales.map((locale) {
+            return DropdownMenuItem(
+              value: locale,
+              child: Text(_getLocaleName(locale)),
+            );
+          }).toList(),
+          onChanged: (newLocale) {
+            if (newLocale != null) {
+              context.read<LocaleCubit>().changeLocale(newLocale);
+            }
+          },
+        );
+      },
     );
   }
-}
-```
 
----
-
-## 🔧 Commands & Features
-
-### Command Palette Commands
-
-| Command | Shortcut | Description |
-|---------|----------|-------------|
-| `Modular L10n: Generate Translations` | - | Manually regenerate all translation files |
-| `Modular L10n: Add Translation Key` | - | Add a new key to a module with translations for all locales |
-| `Modular L10n: Create New Module` | - | Create a new module with l10n folder and ARB files |
-
-### Context Menu
-
-| Action | Location | Description |
-|--------|----------|-------------|
-| **New L10n Module** | Right-click folder | Create l10n folder with ARB files for all detected locales |
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| **Auto-Detect Locales** | Scans ARB files for `@@locale` property - no configuration needed |
-| **Content-Based Detection** | Uses `@@locale` and `@@context` from file content, not filename |
-| **Watch Mode** | Automatically regenerates when ARB files change (enabled by default) |
-| **Locale Validation** | Validates against 170+ known locales with helpful error messages |
-| **ICU Message Syntax** | Full support for `plural`, `select`, `selectordinal` |
-| **Placeholder Support** | Type-safe placeholders with `String`, `int`, `double`, `DateTime` |
-| **RTL Support** | Automatic detection for Arabic, Hebrew, Persian, Urdu, and more |
-| **Combined ARB Export** | Optionally generates combined ARB files for translation services |
-
-### Configuration Options
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `modularL10n.outputPath` | `lib/generated/l10n` | Output path for generated Dart files |
-| `modularL10n.defaultLocale` | `en` | Default/fallback locale |
-| `modularL10n.arbFilePattern` | `**/l10n/*.arb` | Glob pattern to find ARB files |
-| `modularL10n.watchMode` | `true` | Watch for ARB file changes and regenerate |
-| `modularL10n.generateCombinedArb` | `true` | Generate combined ARB files |
-| `modularL10n.className` | `S` | Name of the generated localization class |
-
-### Configure in `.vscode/settings.json`
-
-```json
-{
-  "modularL10n.outputPath": "lib/generated/l10n",
-  "modularL10n.defaultLocale": "en",
-  "modularL10n.watchMode": true,
-  "modularL10n.className": "S"
-}
-```
-
----
-
-## 📱 Platform Configuration (Important!)
-
-To fully support localization on Android and iOS, you need additional platform-specific configuration.
-
-### Android Configuration
-
-**android/app/src/main/AndroidManifest.xml**
-
-Add `android:localeConfig` to the `<application>` tag (Android 13+):
-
-```xml
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application
-        android:label="your_app"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:localeConfig="@xml/locales_config">
-        
-        <!-- ... rest of your manifest -->
-        
-    </application>
-</manifest>
-```
-
-**android/app/src/main/res/xml/locales_config.xml**
-
-Create this file with your supported locales:
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
-    <locale android:name="en"/>
-    <locale android:name="ar"/>
-    <locale android:name="de"/>
-    <locale android:name="es"/>
-    <locale android:name="fr"/>
-    <!-- Add all your supported locales -->
-</locale-config>
-```
-
-**android/app/build.gradle**
-
-Add `resConfigs` to limit included locales (reduces APK size):
-
-```gradle
-android {
-    defaultConfig {
-        // ... other config
-        
-        // Specify the locales your app supports
-        resConfigs "en", "ar", "de", "es", "fr"
+  String _getLocaleName(Locale locale) {
+    switch (locale.languageCode) {
+      case 'en': return 'English';
+      case 'ar': return 'العربية';
+      case 'fr': return 'Français';
+      case 'de': return 'Deutsch';
+      default: return locale.toString();
     }
+  }
 }
 ```
 
-### iOS Configuration
-
-**ios/Runner/Info.plist**
-
-Add supported localizations:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <!-- ... other entries -->
-    
-    <!-- Supported Localizations -->
-    <key>CFBundleLocalizations</key>
-    <array>
-        <string>en</string>
-        <string>ar</string>
-        <string>de</string>
-        <string>es</string>
-        <string>fr</string>
-        <!-- Add all your supported locales -->
-    </array>
-    
-    <!-- Development Language -->
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    
-    <!-- ... other entries -->
-</dict>
-</plist>
-```
-
-### macOS Configuration
-
-**macos/Runner/Info.plist**
-
-Same as iOS:
-
-```xml
-<key>CFBundleLocalizations</key>
-<array>
-    <string>en</string>
-    <string>ar</string>
-    <string>de</string>
-    <string>es</string>
-    <string>fr</string>
-</array>
-
-<key>CFBundleDevelopmentRegion</key>
-<string>en</string>
-```
-
-### Web Configuration
-
-**web/index.html**
-
-Set the `lang` attribute dynamically or statically:
-
-```html
-<!DOCTYPE html>
-<html lang="en" dir="ltr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- ... -->
-</head>
-<body>
-    <!-- ... -->
-</body>
-</html>
-```
-
-For dynamic RTL support, update `dir` attribute in your Flutter code:
+#### 4. Use in Your App
 
 ```dart
-import 'dart:html' as html;
+// In any screen
+import '../widgets/language_switcher.dart';
 
-void updateHtmlDirection(bool isRtl) {
-  html.document.documentElement?.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
-  html.document.documentElement?.setAttribute('lang', isRtl ? 'ar' : 'en');
-}
+AppBar(
+  title: Text('Settings'),
+  actions: [
+    Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16),
+      child: LanguageSwitcher(),
+    ),
+  ],
+)
 ```
 
-### Platform Configuration Summary
+#### Alternative: Using Provider
 
-| Platform | File | What to Add |
-|----------|------|-------------|
-| **Android** | `AndroidManifest.xml` | `android:localeConfig` attribute |
-| **Android** | `res/xml/locales_config.xml` | List of supported locales |
-| **Android** | `build.gradle` | `resConfigs` for APK optimization |
-| **iOS** | `Info.plist` | `CFBundleLocalizations` array |
-| **macOS** | `Info.plist` | `CFBundleLocalizations` array |
-| **Web** | `index.html` | `lang` and `dir` attributes |
+If you prefer **Provider**, replace the Cubit with a `ChangeNotifier`:
+
+```dart
+// lib/core/locale/locale_provider.dart
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class LocaleProvider extends ChangeNotifier {
+  static const _localeKey = 'app_locale';
+  Locale _locale = const Locale('en');
+
+  Locale get locale => _locale;
+
+  LocaleProvider() {
+    _loadSavedLocale();
+  }
+
+  Future<void> _loadSavedLocale() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedLocale = prefs.getString(_localeKey);
+    if (savedLocale != null) {
+      _locale = _localeFromString(savedLocale);
+      notifyListeners();
+    }
+  }
+
+  Future<void> changeLocale(Locale newLocale) async {
+    _locale = newLocale;
+    notifyListeners();
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_localeKey, newLocale.toString());
+  }
+
+  Locale _localeFromString(String localeStr) {
+    final parts = localeStr.split('_');
+    if (parts.length == 1) return Locale(parts[0]);
+    if (parts.length == 2) return Locale(parts[0], parts[1]);
+    return Locale(parts[0], parts[1]);
+  }
+}
+
+// main.dart
+void main() {
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => LocaleProvider(),
+      child: const MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      locale: context.watch<LocaleProvider>().locale,
+      // ... rest of config
+    );
+  }
+}
+
+// In language switcher
+context.read<LocaleProvider>().changeLocale(newLocale);
+```
+
+#### Alternative: Using Riverpod
+
+For **Riverpod** users:
+
+```dart
+// lib/core/locale/locale_provider.dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+final localeProvider = StateNotifierProvider<LocaleNotifier, Locale>((ref) {
+  return LocaleNotifier();
+});
+
+class LocaleNotifier extends StateNotifier<Locale> {
+  static const _localeKey = 'app_locale';
+
+  LocaleNotifier() : super(const Locale('en')) {
+    _loadSavedLocale();
+  }
+
+  Future<void> _loadSavedLocale() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedLocale = prefs.getString(_localeKey);
+    if (savedLocale != null) {
+      state = _localeFromString(savedLocale);
+    }
+  }
+
+  Future<void> changeLocale(Locale newLocale) async {
+    state = newLocale;
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_localeKey, newLocale.toString());
+  }
+
+  Locale _localeFromString(String localeStr) {
+    final parts = localeStr.split('_');
+    if (parts.length == 1) return Locale(parts[0]);
+    if (parts.length == 2) return Locale(parts[0], parts[1]);
+    return Locale(parts[0], parts[1]);
+  }
+}
+
+// main.dart
+void main() {
+  runApp(
+    ProviderScope(
+      child: const MyApp(),
+    ),
+  );
+}
+
+class MyApp extends ConsumerWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final locale = ref.watch(localeProvider);
+    
+    return MaterialApp(
+      locale: locale,
+      // ... rest of config
+    );
+  }
+}
+
+// In language switcher
+ref.read(localeProvider.notifier).changeLocale(newLocale);
+```
 
 ---
 
-## 📝 ARB File Reference
+## 🌍 Advanced ARB Features
 
-### Required Properties
-
-Every ARB file **must** have these properties:
+### 1. Placeholders
 
 ```json
 {
   "@@locale": "en",
-  "@@context": "module_name"
-}
-```
-
-| Property | Format | Example | Description |
-|----------|--------|---------|-------------|
-| `@@locale` | ISO 639-1 | `en`, `ar`, `de` | Language code |
-| `@@context` | snake_case | `auth`, `user_profile` | Module name |
-
-### Simple Strings
-
-```json
-{
-  "title": "Home",
-  "subtitle": "Welcome to our app"
-}
-```
-
-### With Descriptions
-
-```json
-{
-  "deleteButton": "Delete",
-  "@deleteButton": {
-    "description": "Button to permanently delete an item"
-  }
-}
-```
-
-### With Placeholders
-
-```json
-{
-  "greeting": "Hello, {name}!",
-  "@greeting": {
+  "@@context": "auth",
+  
+  "welcomeMessage": "Welcome, {name}!",
+  
+  "@welcomeMessage": {
     "placeholders": {
       "name": {
-        "type": "String",
-        "example": "Ahmed"
+        "type": "String"
       }
     }
   }
 }
 ```
 
-### With Pluralization
+Usage:
+```dart
+ML.of(context).auth.welcomeMessage('Alice')
+// Output: "Welcome, Alice!"
+```
+
+### 2. ICU Plural Messages
 
 ```json
 {
-  "itemCount": "{count, plural, =0{No items} =1{1 item} other{{count} items}}",
-  "@itemCount": {
+  "messageCount": "{count, plural, =0{No messages} =1{1 message} other{{count} messages}}",
+  
+  "@messageCount": {
     "placeholders": {
       "count": {
         "type": "int"
@@ -783,12 +582,20 @@ Every ARB file **must** have these properties:
 }
 ```
 
-### With Select
+Usage:
+```dart
+ML.of(context).home.messageCount(0)   // "No messages"
+ML.of(context).home.messageCount(1)   // "1 message"
+ML.of(context).home.messageCount(5)   // "5 messages"
+```
+
+### 3. ICU Select Messages
 
 ```json
 {
-  "pronoun": "{gender, select, male{He} female{She} other{They}}",
-  "@pronoun": {
+  "greeting": "{gender, select, male{Hello, sir!} female{Hello, ma'am!} other{Hello!}}",
+  
+  "@greeting": {
     "placeholders": {
       "gender": {
         "type": "String"
@@ -798,122 +605,408 @@ Every ARB file **must** have these properties:
 }
 ```
 
+Usage:
+```dart
+ML.of(context).profile.greeting('male')    // "Hello, sir!"
+ML.of(context).profile.greeting('female')  // "Hello, ma'am!"
+ML.of(context).profile.greeting('other')   // "Hello!"
+```
+
+### 4. Number Formatting
+
+```json
+{
+  "totalAmount": "Total: {amount}",
+  
+  "@totalAmount": {
+    "placeholders": {
+      "amount": {
+        "type": "double",
+        "format": "currency",
+        "optionalParameters": {
+          "symbol": "$",
+          "decimalDigits": 2
+        }
+      }
+    }
+  }
+}
+```
+
+Usage:
+```dart
+ML.of(context).payments.totalAmount(125.5)
+// Output: "Total: $125.50"
+```
+
+### 5. Date/Time Formatting
+
+```json
+{
+  "orderDate": "Order placed on {date}",
+  
+  "@orderDate": {
+    "placeholders": {
+      "date": {
+        "type": "DateTime",
+        "format": "yMd"
+      }
+    }
+  }
+}
+```
+
+Usage:
+```dart
+ML.of(context).orders.orderDate(DateTime(2024, 1, 15))
+// Output: "Order placed on 1/15/2024"
+```
+
+**Available date formats:** `yMd`, `yMMMMd`, `jm`, `Hm`, and [more from Intl](https://api.flutter.dev/flutter/intl/DateFormat-class.html).
+
+### 6. Compound ICU Messages
+
+Multiple ICU expressions in one string:
+
+```json
+{
+  "orderSummary": "{gender, select, male{He} female{She} other{They}} ordered {count, plural, =0{nothing} one{1 item} other{{count} items}}",
+  
+  "@orderSummary": {
+    "placeholders": {
+      "gender": {"type": "String"},
+      "count": {"type": "int"}
+    }
+  }
+}
+```
+
+Usage:
+```dart
+ML.of(context).orders.orderSummary('female', 3)
+// Output: "She ordered 3 items"
+```
+
 ---
 
-## 📦 Companion Package (Optional)
+## ⚙️ Configuration
 
-For additional convenience features, consider using the companion Dart package:
+### Zero-Config Default Behavior
 
-### [modular_l10n](https://pub.dev/packages/modular_l10n)
+The extension works **out-of-the-box** with these defaults:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `className` | `ML` | Generated class name (keep as `ML` to avoid Flutter Intl conflicts) |
+| `outputPath` | `lib/generated/modular_l10n` | Where generated Dart files go |
+| `defaultLocale` | `en` | Fallback locale if a translation is missing |
+| `arbFilePattern` | `**/l10n/*.arb` | Where to find ARB files (excludes `intl_*.arb`) |
+| `watchMode` | `true` | Auto-regenerate on ARB file changes |
+| `generateCombinedArb` | `true` | Create combined ARB files in output directory |
+| `useDeferredLoading` | `false` | Enable lazy-loading for web optimization |
+
+### When to Configure
+
+| Scenario | Method |
+|----------|--------|
+| **Team project** (recommended) | Edit `pubspec.yaml` → version-controlled, consistent |
+| **Personal preferences** | VS Code Settings (`settings.json`) |
+| **Never** | Most apps don't need custom configuration |
+
+### Option 1: pubspec.yaml (Recommended)
 
 ```yaml
-dependencies:
-  modular_l10n: ^1.0.0
+# pubspec.yaml
+modular_l10n:
+  enabled: true
+  class_name: ML
+  default_locale: en
+  output_dir: lib/generated/modular_l10n
+  arb_dir_pattern: "**/l10n/*.arb"
+  generate_combined_arb: true
+  use_deferred_loading: false
+  watch_mode: true
 ```
 
-### Benefits
+### Option 2: VS Code Settings
 
-| Feature | Description |
-|---------|-------------|
-| **LocaleProvider Widget** | Built-in widget for locale management |
-| **Context Extensions** | `context.setLocale()`, `context.currentLocale` |
-| **RTL Utilities** | `LocaleUtils.isRtl()`, `locale.isRtl` |
-| **Locale Parsing** | `LocaleUtils.parse('en_US')` |
-| **Display Names** | `locale.displayName`, `locale.nativeName` |
-| **Text Direction** | `LocaleUtils.getTextDirection()` |
-
-### Example with Package
-
-```dart
-import 'package:modular_l10n/modular_l10n.dart';
-
-// Check RTL
-if (context.currentLocale.isRtl) {
-  // Handle RTL layout
+```json
+// .vscode/settings.json
+{
+  "modularL10n.className": "ML",
+  "modularL10n.outputPath": "lib/generated/modular_l10n",
+  "modularL10n.defaultLocale": "en",
+  "modularL10n.arbFilePattern": "**/l10n/*.arb",
+  "modularL10n.generateCombinedArb": true,
+  "modularL10n.useDeferredLoading": false,
+  "modularL10n.watchMode": true
 }
-
-// Change locale
-context.setLocale(const Locale('ar'));
-
-// Get display name
-print(const Locale('ar').nativeName);  // "العربية"
-print(const Locale('ar').displayName); // "Arabic"
 ```
 
-### When to Use
-
-| Use Case | Extension Only | With Package |
-|----------|----------------|--------------|
-| Basic localization | ✅ | ✅ |
-| Custom state management (Cubit, Riverpod) | ✅ | ✅ |
-| Built-in locale provider | ❌ | ✅ |
-| RTL helper utilities | Manual | ✅ Built-in |
-| Locale display names | Manual | ✅ Built-in |
+**Priority:** `pubspec.yaml` > VS Code settings > defaults
 
 ---
 
-## ❓ FAQ
+## 🔄 Extension Commands
 
-### Why use modular localization?
+Access via Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-- **Scalability**: Large apps with 1000+ keys become unmanageable in a single file
-- **Team Collaboration**: Different teams can work on different modules
-- **Feature Isolation**: Delete a feature = delete its translations
-- **Code Review**: Smaller, focused changes are easier to review
+| Command | Description | When to Use |
+|---------|-------------|-------------|
+| **Initialize** | One-click setup for new projects | First time setup |
+| **Generate Translations** | Regenerate Dart files from ARB | After editing ARB files (auto-runs in watch mode) |
+| **Add Key** | Add new translation key to existing module | Interactive key creation |
+| **Create Module** | Create new feature module with ARB files | Starting a new feature |
+| **Add Locale** | Add new locale to all existing modules | Supporting new language |
+| **Remove Locale** | Remove locale from all modules | Dropping language support |
+| **Add L10n Folder** (right-click) | Add l10n folder to directory | Organizing existing features |
+| **Migrate from Flutter Intl** | Convert Flutter Intl ARB files to modular | Migrating existing projects |
+| **Extract to ARB** (code action) | Extract string literal to ARB file | While coding in Dart files |
 
-### Can I use this with flutter_localizations?
+### Code Action: Extract to ARB
 
-Yes! Add it for Material/Cupertino widget translations:
+Select a string literal in your Dart code → lightbulb appears → choose **"Modular L10n: Extract to ARB"**:
 
 ```dart
-import 'package:flutter_localizations/flutter_localizations.dart';
+// Before
+Text('Log In')
+     ^^^^^^^^ (select this)
 
+// After extraction
+Text(ML.of(context).auth.loginButton)
+
+// ARB file updated
+{
+  "loginButton": "Log In"
+}
+```
+
+---
+
+## 🤝 Coexistence with Flutter Intl
+
+✅ **Both extensions can work together!** This is intentional.
+
+### Recommended Hybrid Setup
+
+| Scope | Extension | Location |
+|-------|-----------|----------|
+| **Global strings** (app name, shared actions) | Flutter Intl | `lib/l10n/intl_*.arb` |
+| **Feature strings** (auth flows, settings) | Modular L10n | `lib/features/**/l10n/*.arb` |
+
+### Critical Rules to Avoid Conflicts
+
+1. **Class Name**  
+   - ✅ Modular L10n: `ML` (default)
+   - ✅ Flutter Intl: `S` (default)
+   - ❌ Never use same name for both!
+
+2. **ARB File Naming**  
+   - ✅ Modular: `{module}_{locale}.arb` (e.g., `auth_en.arb`)
+   - ✅ Flutter Intl: `intl_{locale}.arb` (e.g., `intl_en.arb`)
+   - ❌ Never name modular files `intl_*.arb` (auto-skipped)
+
+3. **Required Properties**  
+   - ✅ Modular: Must have `@@context` property
+   - ✅ Flutter Intl: No `@@context` property
+   - This is how the extension distinguishes them
+
+4. **Output Directories**  
+   - ✅ Modular: `lib/generated/modular_l10n/`
+   - ✅ Flutter Intl: `lib/generated/`
+   - Keep separate to avoid file overwrites
+
+### Using Both in Code
+
+```dart
+// Modular translations (feature-specific)
+Text(ML.of(context).auth.loginButton)
+
+// Flutter Intl translations (global)
+Text(S.of(context).appName)
+
+// Both work with same delegates
 MaterialApp(
   localizationsDelegates: [
-    S.delegate,
+    ML.delegate,    // ← Modular
+    S.delegate,     // ← Flutter Intl
     GlobalMaterialLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
+    // ...
   ],
 )
 ```
 
-### How do I add a new locale?
+---
 
-1. Create ARB file with `@@locale` set to the new locale
-2. The extension auto-detects it on next generation
+## 🚨 Troubleshooting
 
-### How do I add a new module?
+### Build Errors
 
-1. Right-click folder → "New L10n Module", OR
-2. Command Palette → "Modular L10n: Create New Module"
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `The argument type 'ML' can't be assigned` | Missing delegate in MaterialApp | Add `ML.delegate` to `localizationsDelegates` |
+| `No instance of ML present` | Delegate not registered | Ensure `ML.delegate` is in `localizationsDelegates` list |
+| `Undefined class 'ML'` | Generated files not imported | Import `package:your_app/generated/modular_l10n/l10n.dart` |
+| `The getter 'auth' isn't defined` | Module not generated | Run `Modular L10n: Generate Translations` |
 
-### Files not generating?
+### ARB Files Not Detected
 
-1. Check ARB files have `@@locale` AND `@@context`
-2. Check Output panel: View → Output → "Modular L10n"
-3. Try manual generation via Command Palette
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Files ignored during scan | Missing `@@context` or `@@locale` | Add both properties to ARB file |
+| Wrong file pattern | Custom directory structure | Update `arbFilePattern` in config |
+| Conflicting with Flutter Intl | File named `intl_*.arb` | Rename to `{module}_{locale}.arb` |
+
+### In-App Language Switching
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| App restarts on Android | Missing `configChanges` | Add `android:configChanges="locale\|layoutDirection"` to AndroidManifest |
+| Locale ignored on iOS | Locale not declared | Add all locales to `CFBundleLocalizations` in Info.plist |
+| RTL not working | Missing RTL support | Add `android:supportsRtl="true"` (delegates handle direction automatically) |
+| UI doesn't update | State not rebuilt | Call `setState()` or use state management after locale change |
+
+### Validation Errors
+
+Check Output panel (`View` → `Output` → Select "Modular L10n"):
+
+```
+❌ lib/features/auth/l10n/auth_en.arb: Missing required property "@@context"
+❌ lib/features/home/l10n/home_ar.arb: Invalid locale "ara" (should be "ar")
+```
 
 ---
 
-## 🤝 Contributing
+## 💡 Best Practices
 
-Contributions are welcome! Please visit our [GitHub repository](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization).
+### 1. Module Granularity
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+**Good** (feature-level):
+```
+lib/features/
+├── auth/l10n/          ← Login, signup, password reset
+├── profile/l10n/       ← User profile, settings
+├── payments/l10n/      ← Checkout, payment methods
+```
+
+**Too fine-grained** (avoid):
+```
+lib/features/
+├── login/l10n/         ← Too specific
+├── signup/l10n/        ← Group under 'auth' instead
+├── forgot_password/l10n/
+```
+
+### 2. Key Naming
+
+**Good** (simple, module provides namespace):
+```json
+{
+  "@@context": "auth",
+  "loginButton": "Log In",
+  "emailLabel": "Email"
+}
+```
+Access: `ML.of(context).auth.loginButton`
+
+**Avoid** (redundant prefix):
+```json
+{
+  "@@context": "auth",
+  "authLoginButton": "Log In",  ← 'auth' prefix redundant
+  "authEmailLabel": "Email"
+}
+```
+
+### 3. Locale Organization
+
+- Add new locales to **all modules simultaneously** using `Add Locale` command
+- Use same locale codes across all modules (e.g., all use `en_US` or all use `en`)
+- Keep default locale (`en`) as most complete; other locales can have empty strings initially
+
+### 4. Version Control
+
+**Commit generated files:**
+```gitignore
+# DON'T ignore these
+# lib/generated/modular_l10n/
+```
+
+**Why?** CI/CD builds need them. The extension doesn't run in CI.
+
+**Do ignore:**
+```gitignore
+# Generated ARB files (optional)
+lib/generated/modular_l10n/arb/
+```
+
+### 5. Migration Strategy
+
+When migrating existing Flutter Intl projects:
+
+1. Keep Flutter Intl for global strings (low churn)
+2. Migrate high-churn features first (auth, settings)
+3. Use `Migrate from Flutter Intl` command to split by prefix
+4. Gradually move remaining translations module by module
 
 ---
 
-## 📄 License
+## ❓ Support & Feedback
 
-MIT License - see [LICENSE](LICENSE) for details.
+- **Bug report** → [GitHub Issues](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/issues)
+- **Feature request** → [GitHub Issues (enhancement)](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/issues/new?labels=enhancement)
+- **Questions** → [GitHub Discussions](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/discussions)
 
 ---
 
-<p align="center">
-  Made with ❤️ by <a href="https://utanium.org">Utanium</a>
-</p>
+## 📜 License
+
+MIT License – See [LICENSE](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/blob/main/LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+Built with:
+- [Intl](https://pub.dev/packages/intl) – Flutter's internationalization library
+- [glob](https://www.npmjs.com/package/glob) – File pattern matching
+- [chokidar](https://www.npmjs.com/package/chokidar) – File watching
+- [yaml](https://www.npmjs.com/package/yaml) – YAML parsing
+
+Inspired by Flutter Intl's developer experience while solving modular architecture needs.
+
+---
+
+## 🤝 About the Author
+
+<div align="center">
+  <a href="https://github.com/IbrahimElmourchidi">
+    <img src="https://github.com/IbrahimElmourchidi.png" width="80" alt="Ibrahim El Mourchidi" style="border-radius: 50%;">
+  </a>
+  <h3>Ibrahim El Mourchidi</h3>
+  <p>Flutter & Backend Engineer • Cairo, Egypt</p>
+  <p>
+    <a href="https://github.com/IbrahimElmourchidi">
+      <img src="https://img.shields.io/github/followers/IbrahimElmourchidi?label=Follow&style=social" alt="GitHub">
+    </a>
+    <a href="mailto:ibrahimelmourchidi@gmail.com">
+      <img src="https://img.shields.io/badge/Email-D14836?logo=gmail&logoColor=white" alt="Email">
+    </a>
+    <a href="https://www.linkedin.com/in/ibrahimelmourchidi">
+      <img src="https://img.shields.io/badge/LinkedIn-0077B5?logo=linkedin&logoColor=white" alt="LinkedIn">
+    </a>
+  </p>
+</div>
+
+---
+
+## 👥 Contributors
+
+<a href="https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=IbrahimElmourchidi/Modular_Flutter_Localization" />
+</a>
+
+---
+
+> ✨ **Built with ❤️ for Flutter developers scaling international apps**  
+> Star us on [GitHub](https://github.com/IbrahimElmourchidi/Modular_Flutter_Localization) if this helps you!
