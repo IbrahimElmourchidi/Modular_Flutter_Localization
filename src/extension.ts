@@ -7,8 +7,18 @@ import { FileWatcher } from './file_watcher';
 import { ModuleScanner, ScanResult } from './module_scanner';
 import { PubspecConfigReader, mergeConfigs } from './pubspec_config';
 import { ExtractToArbProvider, executeExtractToArb } from './extract_action_provider';
+import { MissingTranslationDiagnostics } from './diagnostics_provider';
+import { scanHardcodedStrings } from './hardcoded_string_scanner';
+import { TranslationHoverProvider } from './hover_provider';
+import { TranslationDefinitionProvider } from './definition_provider';
+import { sortArbKeys } from './arb_sort';
+import { findUnusedKeys } from './unused_key_scanner';
+import { renameKey } from './key_rename';
+import { exportTranslations, importTranslations } from './export_import';
+import { generatePseudoLocale } from './pseudo_locale';
 
 let fileWatcher: FileWatcher | undefined;
+let diagnosticsProvider: MissingTranslationDiagnostics | undefined;
 
 /**
  * Get effective configuration by merging VS Code settings with pubspec.yaml.
@@ -127,12 +137,94 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
-    // NEW: Register code action provider for "Extract to ARB"
+    // ─── New feature commands ─────────────────────────────────────────
+
+    const checkMissingTranslationsCommand = vscode.commands.registerCommand(
+        'modularL10n.checkMissingTranslations',
+        async () => {
+            if (!diagnosticsProvider) {
+                diagnosticsProvider = new MissingTranslationDiagnostics();
+            }
+            await diagnosticsProvider.runDiagnostics(outputChannel);
+        }
+    );
+
+    const scanHardcodedStringsCommand = vscode.commands.registerCommand(
+        'modularL10n.scanHardcodedStrings',
+        async () => {
+            await scanHardcodedStrings(outputChannel);
+        }
+    );
+
+    const sortArbKeysCommand = vscode.commands.registerCommand(
+        'modularL10n.sortArbKeys',
+        async () => {
+            await sortArbKeys(outputChannel);
+        }
+    );
+
+    const findUnusedKeysCommand = vscode.commands.registerCommand(
+        'modularL10n.findUnusedKeys',
+        async () => {
+            await findUnusedKeys(outputChannel);
+        }
+    );
+
+    const renameKeyCommand = vscode.commands.registerCommand(
+        'modularL10n.renameKey',
+        async () => {
+            await renameKey(outputChannel);
+        }
+    );
+
+    const exportTranslationsCommand = vscode.commands.registerCommand(
+        'modularL10n.exportTranslations',
+        async () => {
+            await exportTranslations(outputChannel);
+        }
+    );
+
+    const importTranslationsCommand = vscode.commands.registerCommand(
+        'modularL10n.importTranslations',
+        async () => {
+            await importTranslations(outputChannel);
+        }
+    );
+
+    const generatePseudoLocaleCommand = vscode.commands.registerCommand(
+        'modularL10n.generatePseudoLocale',
+        async () => {
+            await generatePseudoLocale(outputChannel);
+        }
+    );
+
+    // ─── Register providers ───────────────────────────────────────────
+
     const codeActionProvider = vscode.languages.registerCodeActionsProvider(
         { language: 'dart', scheme: 'file' },
         new ExtractToArbProvider(),
         { providedCodeActionKinds: ExtractToArbProvider.providedCodeActionKinds }
     );
+
+    const hoverProvider = vscode.languages.registerHoverProvider(
+        { language: 'dart', scheme: 'file' },
+        new TranslationHoverProvider()
+    );
+
+    const definitionProvider = vscode.languages.registerDefinitionProvider(
+        { language: 'dart', scheme: 'file' },
+        new TranslationDefinitionProvider()
+    );
+
+    // ─── Initialize diagnostics provider ──────────────────────────────
+    diagnosticsProvider = new MissingTranslationDiagnostics();
+
+    // Run diagnostics on ARB file save
+    const arbSaveWatcher = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+        if (doc.fileName.endsWith('.arb') && diagnosticsProvider) {
+            await diagnosticsProvider.runDiagnostics(outputChannel);
+        }
+    });
 
     context.subscriptions.push(
         generateCommand,
@@ -145,7 +237,19 @@ export function activate(context: vscode.ExtensionContext) {
         removeLocaleCommand,
         extractToArbCommand,
         checkCompatibilityCommand,
-        codeActionProvider
+        checkMissingTranslationsCommand,
+        scanHardcodedStringsCommand,
+        sortArbKeysCommand,
+        findUnusedKeysCommand,
+        renameKeyCommand,
+        exportTranslationsCommand,
+        importTranslationsCommand,
+        generatePseudoLocaleCommand,
+        codeActionProvider,
+        hoverProvider,
+        definitionProvider,
+        diagnosticsProvider.getDiagnosticCollection(),
+        arbSaveWatcher
     );
 
     // Start file watcher if enabled

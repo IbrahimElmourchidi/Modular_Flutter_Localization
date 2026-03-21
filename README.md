@@ -762,15 +762,23 @@ Access via Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 | **Add L10n Folder** (right-click) | Add l10n folder to directory | Organizing existing features |
 | **Migrate from Flutter Intl** | Convert Flutter Intl ARB files to modular | Migrating existing projects |
 | **Extract to ARB** (code action) | Extract string literal to ARB file | While coding in Dart files |
+| **Check Missing Translations** | Show warnings for missing/empty translations | After adding keys to default locale |
+| **Scan Hardcoded Strings** | Find user-facing strings that should be localized | Auditing existing code |
+| **Sort ARB Keys** | Sort keys alphabetically in ARB files | Keeping ARB files tidy |
+| **Find Unused Keys** | Find translation keys not referenced in Dart code | Cleaning up unused translations |
+| **Rename Translation Key** | Rename a key across all ARB files and Dart code | Refactoring key names |
+| **Export Translations (CSV/XLIFF)** | Export translations for external translators | Sending to translation team |
+| **Import Translations (CSV/XLIFF)** | Import translated files back into ARB | Receiving translations |
+| **Generate Pseudo-Locale** | Create accented/expanded strings for UI testing | Testing layout with different text lengths |
 
 ### Code Action: Extract to ARB
 
-Select a string literal in your Dart code → lightbulb appears → choose **"Modular L10n: Extract to ARB"**:
+Place your **cursor inside any string literal** in Dart code → the lightbulb appears → choose **"Modular L10n: Extract to ARB"**. No need to select the full string — the extension auto-detects the string boundaries.
 
 ```dart
-// Before
+// Before — just place your cursor anywhere inside the string
 Text('Log In')
-     ^^^^^^^^ (select this)
+        ^ cursor here is enough!
 
 // After extraction
 Text(ML.of(context).auth.loginButton)
@@ -780,6 +788,153 @@ Text(ML.of(context).auth.loginButton)
   "loginButton": "Log In"
 }
 ```
+
+**Supported string types:**
+- Single-quoted: `'hello'`
+- Double-quoted: `"hello"`
+- Triple-quoted: `'''multi\nline'''` and `"""multi\nline"""`
+- Raw strings: `r'no escapes'` and `r"no escapes"`
+- Escaped characters: `'it\'s working'` → properly unescaped in ARB
+- Dart interpolation: `'Hello $name'` → auto-converted to `"Hello {name}"` with placeholder metadata
+
+You can also still select the full string manually — both workflows are supported.
+
+---
+
+## 🔍 Editor Features
+
+### Inline Translation Hover
+
+Hover over any translation key usage in Dart to see all locale values in a tooltip:
+
+```dart
+Text(ML.of(context).auth.loginButton)
+//   ^ hover here to see:
+//   | Locale | Translation |
+//   |--------|-------------|
+//   | **en** | Log In      |
+//   | ar     | تسجيل الدخول |
+//   | fr     | Connexion   |
+```
+
+### Go to ARB Definition
+
+**Ctrl+Click** (or **Cmd+Click** on macOS) on any translation key to jump directly to the corresponding entry in the default locale's ARB file.
+
+```dart
+Text(ML.of(context).auth.loginButton)
+//                       ^ Ctrl+Click → opens auth_en.arb at "loginButton"
+```
+
+### Missing Translation Diagnostics
+
+Warnings appear automatically in the **Problems panel** when:
+- A key exists in the default locale but is **missing** in other locales
+- A key exists but has an **empty value** in a locale
+
+Diagnostics run automatically when you save any ARB file.
+
+You can also trigger them manually: `Modular L10n: Check Missing Translations`
+
+---
+
+## 🛠️ Maintenance Tools
+
+### Scan Hardcoded Strings
+
+Find hardcoded user-facing strings that should be localized:
+
+```
+Modular L10n: Scan Hardcoded Strings
+```
+
+Scans `lib/` for strings in UI contexts like `Text()`, `label:`, `title:`, `hintText:`, etc. Automatically filters out non-user-facing strings (imports, routes, asset paths, keys, URLs).
+
+Results appear in both the **Output panel** and **Problems panel** as hints.
+
+### Find Unused Keys
+
+Find translation keys in ARB files that are never referenced in Dart code:
+
+```
+Modular L10n: Find Unused Keys
+```
+
+Reports unused keys per module and optionally **bulk-removes** them from all ARB files.
+
+### Sort ARB Keys
+
+Sort keys alphabetically in ARB files for cleaner diffs and easier navigation:
+
+```
+Modular L10n: Sort ARB Keys
+```
+
+- `@@` meta keys stay at the top (`@@locale`, `@@context`)
+- Each key's `@key` metadata stays immediately after its key
+- Sort a single module or all modules at once
+
+### Rename Translation Key
+
+Rename a key across **all locale ARB files** and **all Dart code references** in one action:
+
+```
+Modular L10n: Rename Translation Key
+```
+
+1. Select the module
+2. Pick the key to rename
+3. Enter the new name
+4. All ARB files and Dart files are updated, then code is regenerated
+
+---
+
+## 🌐 Export & Import for Translators
+
+### Export to CSV
+
+```
+Modular L10n: Export Translations (CSV/XLIFF)
+```
+
+Creates a CSV file with columns: `Module`, `Key`, `Description`, then one column per locale. Opens in Excel/Google Sheets for translators.
+
+### Export to XLIFF
+
+Same command, choose **XLIFF 1.2** format — the industry standard for translation tools (memoQ, SDL Trados, Crowdin, etc.).
+
+### Import Translations
+
+```
+Modular L10n: Import Translations (CSV/XLIFF)
+```
+
+Import a translated CSV or XLIFF file back. The extension matches keys to the correct ARB files and updates them.
+
+---
+
+## 🧪 Pseudo-Localization
+
+Test your UI layout with pseudo-translated strings:
+
+```
+Modular L10n: Generate Pseudo-Locale
+```
+
+Generates a special locale (default: `en_XA`) that transforms your default translations:
+
+| Original | Pseudo-localized |
+|----------|-----------------|
+| `Log In` | `[Ĺöğ Ïñ ~~~~~~]` |
+| `Welcome, {name}!` | `[Ŵëĺçöɱë, {name}! ~~~~~~~~~~~]` |
+
+This helps catch:
+- **Truncation** — expanded text (~30-50% longer) reveals overflow
+- **Hardcoded strings** — anything not in brackets `[...]` was missed
+- **Concatenation bugs** — brackets show if strings are incorrectly split
+- **Character encoding** — accented characters reveal rendering issues
+
+Placeholders (`{name}`) and ICU syntax are preserved.
 
 ---
 

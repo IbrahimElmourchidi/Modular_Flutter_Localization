@@ -2,7 +2,7 @@
   "name": "modular-flutter-l10n",
   "displayName": "Modular Flutter L10n",
   "description": "Modular localization for Flutter with full Flutter Intl compatibility. Organize translations by feature/module for better scalability.",
-  "version": "2.0.0",
+  "version": "3.0.2",
   "publisher": "UtaniumOrg",
   "icon": "images/icon.png",
   "engines": {
@@ -50,7 +50,7 @@
     "onLanguage:dart",
     "workspaceContains:**/pubspec.yaml"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "languages": [
       {
@@ -123,6 +123,54 @@
         "title": "Extract String to ARB",
         "category": "Modular L10n",
         "icon": "$(export)"
+      },
+      {
+        "command": "modularL10n.checkMissingTranslations",
+        "title": "Check Missing Translations",
+        "category": "Modular L10n",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "modularL10n.scanHardcodedStrings",
+        "title": "Scan Hardcoded Strings",
+        "category": "Modular L10n",
+        "icon": "$(search)"
+      },
+      {
+        "command": "modularL10n.sortArbKeys",
+        "title": "Sort ARB Keys",
+        "category": "Modular L10n",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "modularL10n.findUnusedKeys",
+        "title": "Find Unused Keys",
+        "category": "Modular L10n",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "modularL10n.renameKey",
+        "title": "Rename Translation Key",
+        "category": "Modular L10n",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "modularL10n.exportTranslations",
+        "title": "Export Translations (CSV/XLIFF)",
+        "category": "Modular L10n",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "modularL10n.importTranslations",
+        "title": "Import Translations (CSV/XLIFF)",
+        "category": "Modular L10n",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "modularL10n.generatePseudoLocale",
+        "title": "Generate Pseudo-Locale",
+        "category": "Modular L10n",
+        "icon": "$(beaker)"
       }
     ],
     "menus": {
@@ -135,36 +183,28 @@
       ],
       "commandPalette": [
         {
-          "command": "modularL10n.initialize",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.initialize"
         },
         {
-          "command": "modularL10n.generate",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.generate"
         },
         {
-          "command": "modularL10n.addKey",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.addKey"
         },
         {
-          "command": "modularL10n.addLocale",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.addLocale"
         },
         {
-          "command": "modularL10n.removeLocale",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.removeLocale"
         },
         {
-          "command": "modularL10n.createModule",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.createModule"
         },
         {
-          "command": "modularL10n.migrateFromFlutterIntl",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.migrateFromFlutterIntl"
         },
         {
-          "command": "modularL10n.checkCompatibility",
-          "when": "workspaceContains:**/pubspec.yaml"
+          "command": "modularL10n.checkCompatibility"
         },
         {
           "command": "modularL10n.extractToArb",
@@ -173,6 +213,30 @@
         {
           "command": "modularL10n.addL10nFolder",
           "when": "false"
+        },
+        {
+          "command": "modularL10n.checkMissingTranslations"
+        },
+        {
+          "command": "modularL10n.scanHardcodedStrings"
+        },
+        {
+          "command": "modularL10n.sortArbKeys"
+        },
+        {
+          "command": "modularL10n.findUnusedKeys"
+        },
+        {
+          "command": "modularL10n.renameKey"
+        },
+        {
+          "command": "modularL10n.exportTranslations"
+        },
+        {
+          "command": "modularL10n.importTranslations"
+        },
+        {
+          "command": "modularL10n.generatePseudoLocale"
         }
       ]
     },
@@ -227,21 +291,15 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run clean && npm run compile:prod",
+    "installLocal": "code --install-extension modular-flutter-l10n-3.0.0.vsix --force",
     "compile": "tsc -p ./",
     "compile:prod": "tsc -p ./ --sourceMap false",
     "watch": "tsc -watch -p ./",
-    "clean": "node scripts/clean.js",
-    "verify": "node scripts/verify-setup.js",
-    "lint": "eslint src --ext ts",
-    "lint:fix": "eslint src --ext ts --fix",
-    "pretest": "npm run compile && npm run lint",
-    "test": "node ./out/test/runTest.js",
-    "package": "vsce package --no-dependencies",
-    "publish": "vsce publish --no-dependencies",
-    "version:patch": "npm version patch && npm run package",
-    "version:minor": "npm version minor && npm run package",
-    "version:major": "npm version major && npm run package"
+    "clean": "rimraf out dist",
+    "bundle": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "bundle:prod": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "package": "npm run bundle:prod && vsce package",
+    "publish": "npm run bundle:prod && vsce publish"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
@@ -250,9 +308,10 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.27.4",
     "eslint": "^8.45.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^2.22.0"
+    "typescript": "^5.3.0"
   },
   "dependencies": {
     "chokidar": "^3.5.3",
