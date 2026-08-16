@@ -184,6 +184,48 @@ const VALID_SCRIPTS = new Set([
     'Hans', 'Hant', 'Latn', 'Cyrl', 'Arab', 'Deva', 'Beng', 'Jpan', 'Kore',
 ]);
 
+/**
+ * Directory names that never contain hand-authored ARB files.
+ *
+ * Matched as whole path segments, not substrings. A substring test wrongly
+ * excludes legitimate modules — `lib/features/generated_reports/l10n/` contains
+ * "generated", `lib/features/build_order/l10n/` contains "build" — and, worse,
+ * excludes the entire workspace whenever the project is checked out beneath a
+ * directory with one of these names.
+ */
+const EXCLUDED_DIRECTORIES = new Set([
+    'generated',
+    '.dart_tool',
+    'build',
+    'node_modules',
+    '.git',
+    '.idea',
+    '.vscode',
+    'output',
+    'outputs',
+    'dist',
+    'tmp',
+]);
+
+/**
+ * True when any path segment *below rootPath* is an excluded directory.
+ * Segments above the workspace root are ignored — where the project happens to
+ * live on disk is not the extension's business.
+ */
+export function isInExcludedDirectory(filePath: string, rootPath: string): boolean {
+    const relative = path.relative(rootPath, filePath);
+
+    // Outside the workspace entirely: nothing sensible to say, keep it.
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        return false;
+    }
+
+    return relative
+        .split(/[\\/]/)
+        .slice(0, -1) // the filename itself is not a directory
+        .some((segment) => EXCLUDED_DIRECTORIES.has(segment));
+}
+
 export class ModuleScanner {
     constructor(
         private rootPath: string,
@@ -264,21 +306,7 @@ export class ModuleScanner {
                 if (err) {
                     reject(err);
                 } else {
-                    const filtered = matches.filter(
-                        (f) =>
-                            !f.includes('generated') &&
-                            !f.includes('.dart_tool') &&
-                            !f.includes('build') &&
-                            !f.includes('node_modules') &&
-                            !f.includes('.git') &&
-                            !f.includes('.idea') &&
-                            !f.includes('.vscode') &&
-                            !f.includes('/outputs/') &&
-                            !f.includes('/output/') &&
-                            !f.includes('/dist/') &&
-                            !f.includes('/tmp/')
-                    );
-                    resolve(filtered);
+                    resolve(matches.filter((f) => !isInExcludedDirectory(f, this.rootPath)));
                 }
             });
         });

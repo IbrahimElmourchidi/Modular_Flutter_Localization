@@ -4,14 +4,15 @@ import * as path from 'path';
 import { glob } from 'glob';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Scans for translation keys that exist in ARB files but are never referenced in Dart code.
  */
-export async function findUnusedKeys(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function findUnusedKeys(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -21,17 +22,17 @@ export async function findUnusedKeys(outputChannel: vscode.OutputChannel): Promi
     const { modules } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showInformationMessage('No modules found.');
+        await logger.notifyInfo('No modules found.');
         return;
     }
 
-    outputChannel.show();
-    outputChannel.appendLine('--- Scanning for unused translation keys ---');
+    logger.reveal('warning');
+    logger.summary('--- Scanning for unused translation keys ---');
 
     // Read all Dart files in lib/
     const libPath = path.join(rootPath, 'lib');
     if (!fs.existsSync(libPath)) {
-        vscode.window.showErrorMessage('No lib/ directory found');
+        await logger.notifyError('No lib/ directory found');
         return;
     }
 
@@ -102,23 +103,23 @@ export async function findUnusedKeys(outputChannel: vscode.OutputChannel): Promi
     );
 
     if (totalUnused === 0) {
-        vscode.window.showInformationMessage('All translation keys are in use!');
-        outputChannel.appendLine('All translation keys are in use.');
+        logger.summary('All translation keys are in use.');
+        await logger.notifyInfo('All translation keys are in use!');
         return;
     }
 
-    outputChannel.appendLine(`\nFound ${totalUnused} potentially unused key(s):\n`);
+    logger.summary(`\nFound ${totalUnused} potentially unused key(s):\n`);
 
     for (const [moduleName, keys] of unusedByModule) {
-        outputChannel.appendLine(`Module "${moduleName}":`);
+        logger.summary(`Module "${moduleName}":`);
         for (const key of keys) {
-            outputChannel.appendLine(`  - ${key}`);
+            logger.summary(`  - ${key}`);
         }
-        outputChannel.appendLine('');
+        logger.blank('warning');
     }
 
     // Offer to remove unused keys
-    const removeAction = await vscode.window.showWarningMessage(
+    const removeAction = await logger.ask(
         `Found ${totalUnused} potentially unused key(s) across ${unusedByModule.size} module(s). ` +
         'Note: some keys may be used dynamically. Review the Output panel before removing.',
         'Remove All Unused', 'Cancel'
@@ -146,13 +147,14 @@ export async function findUnusedKeys(outputChannel: vscode.OutputChannel): Promi
 
                     fs.writeFileSync(arbFile.path, JSON.stringify(arbData, null, 2), 'utf-8');
                 } catch (error) {
-                    outputChannel.appendLine(`Error updating ${arbFile.path}: ${error}`);
+                    logger.error(`Error updating ${arbFile.path}: ${error}`);
+                    logger.reveal('error');
                 }
             }
         }
 
-        outputChannel.appendLine(`Removed ${removedCount} key entries from ARB files.`);
-        vscode.window.showInformationMessage(`Removed ${removedCount} unused key entries.`);
+        logger.summary(`Removed ${removedCount} key entries from ARB files.`);
+        await logger.notifyInfo(`Removed ${removedCount} unused key entries.`);
 
         // Regenerate
         vscode.commands.executeCommand('modularL10n.generate');

@@ -21,6 +21,9 @@ export class TranslationHoverProvider implements vscode.HoverProvider {
 
         const rootPath = workspaceFolders[0].uri.fsPath;
         const config = getEffectiveConfig(rootPath);
+        if (!config.enabled) {
+            return undefined;
+        }
         const className = config.className;
 
         // Get the full line and find the translation access pattern

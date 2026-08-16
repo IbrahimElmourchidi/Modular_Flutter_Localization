@@ -5,6 +5,133 @@ All notable changes to the "Modular Flutter Localization" extension will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-16
+
+A correctness release. Every ICU plural, select, and compound message the
+generator produced was broken at runtime; `Initialize` could destroy a
+`pubspec.yaml`. Both are fixed and verified end to end.
+
+**If you use ICU messages, regenerate after upgrading** — run
+`Modular L10n: Generate Translations`. The generated output changes; your ARB
+files and the `ML.of(context).module.key` API do not.
+
+### Added
+
+- **Log verbosity control.** New `modularL10n.logLevel` setting, and
+  `modular_l10n.log_level` in `pubspec.yaml`, with four levels — `silent`,
+  `error`, `warning`, `verbose`. Controls how much reaches the Output panel,
+  when the panel auto-reveals, and which notifications appear.
+  - `log_level` is optional in `pubspec.yaml`: omit it and your VS Code setting
+    still applies.
+  - Takes effect on the next command — no window reload.
+  - Prompts that need an answer (overwrite confirmations, Flutter Intl conflict
+    resolution, the Remove Locale confirmation) are never suppressed.
+- **`enabled: false` is a real off switch.** Generation, watching, diagnostics,
+  hover, go-to-definition, and the extract code action all stand down.
+  `Initialize` and `Check Compatibility` keep working so a project can be
+  switched back on without hand-editing YAML.
+- **Generation warnings for unusable placeholders.** When a translation uses a
+  placeholder the default locale doesn't declare, the Output panel names the key
+  and locale instead of shipping `{foo}` to users.
+
+### Changed
+
+- **Quieter by default.** At the new default `warning` level the Output panel
+  shows failures, warnings, and a one-line result summary per run rather than
+  the full per-file trace. Set `logLevel` to `verbose` for the previous output.
+- **On-save diagnostics no longer steal focus.** Saving an `.arb` still
+  refreshes the Problems panel but no longer force-reveals the Output panel or
+  raises a notification. The **Check Missing Translations** command is unchanged.
+- **`extensionDependencies` became `extensionPack`**, so installing this
+  extension no longer force-installs the Flutter extension.
+- The generated main class now documents that it supports one active locale at a
+  time — module accessors and `Intl.defaultLocale` are global, so nested
+  `Localizations` scopes with different locales all read the most recently
+  loaded one.
+- Internal `console.log` / `console.warn` calls in the file watcher, ARB parser,
+  and Dart generator route through the level-aware logger instead of the
+  extension host console.
+
+### Fixed — Critical
+
+- **`Initialize` no longer damages `pubspec.yaml`.** The config section was
+  located with a plain substring search for `modular_l10n:`, which also matches
+  the *dependency* entry of the same name — the exact project shape this
+  toolchain is built for. A regex replace anchored on that match deleted every
+  dependency declared after it and wrote the config at dependency indentation,
+  producing YAML that no longer parsed. `writeConfig` now edits the parsed YAML
+  document, so only the top-level node is touched and surrounding comments and
+  formatting survive.
+- **Plural and select keys no longer crash with `StackOverflowError`.** Entries
+  in the generated lookup table passed `name:` and `args:` to `Intl.plural` /
+  `Intl.select`. Passing `name` is what makes `intl` perform a lookup — and the
+  lookup for that name resolved back to the same closure, recursing until the
+  stack blew on the first call.
+- **ICU case content renders its values again.** `{count}` was converted to
+  `$count` and the result then escaped, turning the interpolation into the
+  literal text `\$count`. Escaping and placeholder conversion are now a single
+  pass, so `other: '$count items'` renders "5 items", not "$count items".
+- **Compound ICU messages work.** Messages combining several ICU expressions
+  emitted their own Dart source as a string literal, and the placeholder scanner
+  treated select *case bodies* as placeholders — `{gender, select, male{He}
+  other{They}}` produced the parameters `He` and `They`. Case interiors are now
+  skipped, and the expression is assembled from escaped literal runs plus raw
+  interpolations.
+- **Arguments no longer get swapped between locales.** Each locale's lookup
+  closure derived its own parameter order from its own translation, while the
+  caller always passed arguments in the default locale's order — and `intl`
+  dispatches positionally. A translation that reorders placeholders (routine in
+  Arabic, German, Japanese) silently received them transposed. The parameter
+  list is now computed once from the default locale and reused everywhere.
+
+### Fixed
+
+- **Placeholder metadata is no longer lost.** ARB files were read in glob order,
+  so a locale sorting before the default one (`ar` before `en`) created each key
+  first with no metadata, and the default locale's `@key` block was then never
+  read. Every parameter degraded to `Object` and all `NumberFormat` /
+  `DateFormat` directives were dropped. The default-locale file is read first.
+- **Parameterized fallback strings interpolate.** `Intl.message` received the
+  raw ARB text, so an unsupported locale — or any call before
+  `initializeModularMessages` resolved — rendered `Hello {name}` to the user.
+- **The file watcher honours `arb_dir_pattern`.** It hardcoded `**/l10n/*.arb`
+  and ignored the configured pattern, so custom layouts had generation but no
+  watch mode. It also joined an absolute path into the glob, which never matched
+  on Windows — watch mode was effectively dead there.
+- **`pubspec.yaml` config merges per key.** A `modular_l10n:` block replaced the
+  entire configuration, so specifying only `class_name` silently reset
+  `output_dir`, `default_locale`, and the rest to built-in defaults instead of
+  the developer's VS Code settings — contradicting the documented precedence.
+- **Directory exclusions match path segments, not substrings.**
+  `lib/features/generated_reports/l10n/` and `lib/features/build_order/l10n/`
+  were silently skipped, and a project checked out under a directory named
+  `build` or `generated` had its entire workspace excluded.
+- **Locale resolution in the generated delegate.** `isSupported` matched on
+  language alone but then handed `load()` the *device* locale, for which no
+  message table is registered. The delegate resolves to the closest supported
+  locale first.
+- **The hardcoded-string scan no longer leaks.** Each run created a
+  `DiagnosticCollection` that was never disposed or registered, so stale
+  findings accumulated in the Problems panel with no way to clear them.
+- **Combined ARB files stop churning git.** `@@last_modified` carried a full ISO
+  timestamp that changed on every run; it is now a date, and generated files are
+  only written when their content actually differs.
+- **`pubspec.yaml` edits apply without a window reload.**
+  `onDidChangeConfiguration` only fires for VS Code settings, so changing
+  `watch_mode` or `arb_dir_pattern` in pubspec did nothing until restart.
+- **The "Change to ML" prompt in `Initialize` does something.** The branch body
+  was empty and `finalClassName` was assigned the same value on both sides of
+  its ternary.
+- **Generated Dart passes `flutter_lints` cleanly** — verified with
+  `flutter analyze` on the example app. Imports are ordered, the unused
+  `MessageIfAbsent` typedef is gone, `package:intl/intl.dart` is imported only
+  when an entry uses it, and the `ignore_for_file` header covers
+  `implementation_imports` and `library_prefixes`.
+- **Packaging.** `.vscodeignore` now excludes `*.vsix` and `publish.sh` — three
+  stale VSIXs, 1.1 MB combined, would have shipped inside the next package — and
+  `package` / `publish` run `npm ci` first, so the build no longer fails on a
+  `node_modules` tree copied from another platform.
+
 ## [3.0.2] - 2026-03-21
 
 ### Fixed

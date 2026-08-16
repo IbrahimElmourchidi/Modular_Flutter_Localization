@@ -3,14 +3,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ModuleScanner, Module } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Export translations to CSV format for external translators.
  */
-export async function exportTranslations(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function exportTranslations(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -20,7 +21,7 @@ export async function exportTranslations(outputChannel: vscode.OutputChannel): P
     const { modules, detectedLocales } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showInformationMessage('No modules found.');
+        await logger.notifyInfo('No modules found.');
         return;
     }
 
@@ -63,22 +64,22 @@ export async function exportTranslations(outputChannel: vscode.OutputChannel): P
     });
     if (!saveUri) { return; }
 
-    outputChannel.show();
+    logger.reveal();
 
     if (format.value === 'csv') {
-        exportToCsv(targetModules, detectedLocales, config, saveUri.fsPath, outputChannel);
+        await exportToCsv(targetModules, detectedLocales, config, saveUri.fsPath, logger);
     } else {
-        exportToXliff(targetModules, detectedLocales, config, saveUri.fsPath, outputChannel);
+        await exportToXliff(targetModules, detectedLocales, config, saveUri.fsPath, logger);
     }
 }
 
-function exportToCsv(
+async function exportToCsv(
     modules: Module[],
     locales: string[],
     config: ReturnType<typeof getEffectiveConfig>,
     filePath: string,
-    outputChannel: vscode.OutputChannel
-): void {
+    logger: Logger
+): Promise<void> {
     const rows: string[][] = [];
 
     // Header
@@ -123,17 +124,17 @@ function exportToCsv(
     ).join('\n');
 
     fs.writeFileSync(filePath, '\ufeff' + csv, 'utf-8'); // BOM for Excel compatibility
-    outputChannel.appendLine(`Exported ${rows.length - 1} keys to ${filePath}`);
-    vscode.window.showInformationMessage(`Exported translations to CSV (${rows.length - 1} keys)`);
+    logger.summary(`Exported ${rows.length - 1} keys to ${filePath}`);
+    await logger.notifyInfo(`Exported translations to CSV (${rows.length - 1} keys)`);
 }
 
-function exportToXliff(
+async function exportToXliff(
     modules: Module[],
     locales: string[],
     config: ReturnType<typeof getEffectiveConfig>,
     filePath: string,
-    outputChannel: vscode.OutputChannel
-): void {
+    logger: Logger
+): Promise<void> {
     const targetLocales = locales.filter(l => l !== config.defaultLocale);
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
@@ -183,17 +184,17 @@ function exportToXliff(
     xml += `</xliff>\n`;
 
     fs.writeFileSync(filePath, xml, 'utf-8');
-    outputChannel.appendLine(`Exported ${keyCount} translation unit(s) to ${filePath}`);
-    vscode.window.showInformationMessage(`Exported translations to XLIFF (${keyCount} units)`);
+    logger.summary(`Exported ${keyCount} translation unit(s) to ${filePath}`);
+    await logger.notifyInfo(`Exported translations to XLIFF (${keyCount} units)`);
 }
 
 /**
  * Import translations from CSV or XLIFF format.
  */
-export async function importTranslations(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function importTranslations(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -215,13 +216,13 @@ export async function importTranslations(outputChannel: vscode.OutputChannel): P
     const filePath = fileUri[0].fsPath;
     const ext = path.extname(filePath).toLowerCase();
 
-    outputChannel.show();
-    outputChannel.appendLine(`--- Importing translations from ${path.basename(filePath)} ---`);
+    logger.reveal();
+    logger.summary(`--- Importing translations from ${path.basename(filePath)} ---`);
 
     if (ext === '.csv') {
-        await importFromCsv(filePath, modules, config, outputChannel);
+        await importFromCsv(filePath, modules, config, logger);
     } else {
-        await importFromXliff(filePath, modules, config, outputChannel);
+        await importFromXliff(filePath, modules, config, logger);
     }
 
     // Regenerate
@@ -232,13 +233,13 @@ async function importFromCsv(
     filePath: string,
     modules: Module[],
     config: ReturnType<typeof getEffectiveConfig>,
-    outputChannel: vscode.OutputChannel
+    logger: Logger
 ): Promise<void> {
     const content = fs.readFileSync(filePath, 'utf-8').replace(/^\ufeff/, ''); // Remove BOM
     const rows = parseCsv(content);
 
     if (rows.length < 2) {
-        vscode.window.showErrorMessage('CSV file is empty or has no data rows');
+        await logger.notifyError('CSV file is empty or has no data rows');
         return;
     }
 
@@ -257,7 +258,7 @@ async function importFromCsv(
 
         const module = modules.find(m => m.name === moduleName);
         if (!module) {
-            outputChannel.appendLine(`Skipping: module "${moduleName}" not found`);
+            logger.warn(`Skipping: module "${moduleName}" not found`);
             continue;
         }
 
@@ -276,20 +277,21 @@ async function importFromCsv(
                 fs.writeFileSync(arbFile.path, JSON.stringify(arbData, null, 2), 'utf-8');
                 updateCount++;
             } catch (error) {
-                outputChannel.appendLine(`Error updating ${arbFile.path}: ${error}`);
+                logger.error(`Error updating ${arbFile.path}: ${error}`);
+                logger.reveal('error');
             }
         }
     }
 
-    outputChannel.appendLine(`Imported ${updateCount} translation(s) from CSV`);
-    vscode.window.showInformationMessage(`Imported ${updateCount} translation(s) from CSV`);
+    logger.summary(`Imported ${updateCount} translation(s) from CSV`);
+    await logger.notifyInfo(`Imported ${updateCount} translation(s) from CSV`);
 }
 
 async function importFromXliff(
     filePath: string,
     modules: Module[],
     _config: ReturnType<typeof getEffectiveConfig>,
-    outputChannel: vscode.OutputChannel
+    logger: Logger
 ): Promise<void> {
     const content = fs.readFileSync(filePath, 'utf-8');
     let updateCount = 0;
@@ -328,13 +330,14 @@ async function importFromXliff(
                 fs.writeFileSync(arbFile.path, JSON.stringify(arbData, null, 2), 'utf-8');
                 updateCount++;
             } catch (error) {
-                outputChannel.appendLine(`Error updating ${arbFile.path}: ${error}`);
+                logger.error(`Error updating ${arbFile.path}: ${error}`);
+                logger.reveal('error');
             }
         }
     }
 
-    outputChannel.appendLine(`Imported ${updateCount} translation(s) from XLIFF`);
-    vscode.window.showInformationMessage(`Imported ${updateCount} translation(s) from XLIFF`);
+    logger.summary(`Imported ${updateCount} translation(s) from XLIFF`);
+    await logger.notifyInfo(`Imported ${updateCount} translation(s) from XLIFF`);
 }
 
 /**

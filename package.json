@@ -2,7 +2,7 @@
   "name": "modular-flutter-l10n",
   "displayName": "Modular Flutter L10n",
   "description": "Modular localization for Flutter with full Flutter Intl compatibility. Organize translations by feature/module for better scalability.",
-  "version": "3.0.2",
+  "version": "3.1.0",
   "publisher": "UtaniumOrg",
   "icon": "images/icon.png",
   "engines": {
@@ -43,7 +43,7 @@
     "Snippets",
     "Other"
   ],
-  "extensionDependencies": [
+  "extensionPack": [
     "Dart-Code.flutter"
   ],
   "activationEvents": [
@@ -286,20 +286,37 @@
           "type": "boolean",
           "default": true,
           "description": "Show warning when potential Flutter Intl conflicts are detected"
+        },
+        "modularL10n.logLevel": {
+          "type": "string",
+          "default": "warning",
+          "enum": [
+            "silent",
+            "error",
+            "warning",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "Write nothing to the Output panel, never reveal it, and show no notifications.",
+            "Only failures. The Output panel reveals itself when one occurs.",
+            "Failures, warnings, and one-line result summaries (recommended).",
+            "Everything, including per-file and per-key progress. Use when debugging."
+          ],
+          "markdownDescription": "How much the extension writes to the **Modular L10n** output channel and how often it interrupts with notifications.\n\nCan also be set per-project in `pubspec.yaml` as `modular_l10n.log_level`, which takes precedence.\n\nPrompts that require an answer (overwrite confirmations, Flutter Intl conflict resolution) are never suppressed."
         }
       }
     }
   },
   "scripts": {
-    "installLocal": "code --install-extension modular-flutter-l10n-3.0.0.vsix --force",
+    "installLocal": "code --install-extension modular-flutter-l10n-3.1.0.vsix --force",
     "compile": "tsc -p ./",
     "compile:prod": "tsc -p ./ --sourceMap false",
     "watch": "tsc -watch -p ./",
     "clean": "rimraf out dist",
     "bundle": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "bundle:prod": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
-    "package": "npm run bundle:prod && vsce package",
-    "publish": "npm run bundle:prod && vsce publish"
+    "package": "npm ci && npm run bundle:prod && vsce package",
+    "publish": "npm ci && npm run bundle:prod && vsce publish"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",

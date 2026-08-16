@@ -1,6 +1,7 @@
 import * as chokidar from 'chokidar';
 import * as path from 'path';
 import * as fs from 'fs';
+import { isInExcludedDirectory } from './module_scanner';
 
 export class FileWatcher {
     private watcher: chokidar.FSWatcher | null = null;
@@ -10,7 +11,9 @@ export class FileWatcher {
     constructor(
         private rootPath: string,
         private pattern: string,
-        private onChange: () => Promise<void>
+        private onChange: () => Promise<void>,
+        /** Level-aware trace sink. Defaults to a no-op so the watcher stays silent. */
+        private trace: (message: string) => void = () => {}
     ) {}
 
     start(): void {
@@ -18,15 +21,18 @@ export class FileWatcher {
             return;
         }
 
-        const watchPath = path.join(this.rootPath, '**', 'l10n', '*.arb');
-
-        this.watcher = chokidar.watch(watchPath, {
+        // Watch the *configured* pattern, relative to the workspace root.
+        //
+        // Two things matter here. Hardcoding `**/l10n/*.arb` made a custom
+        // `arb_dir_pattern` work for generation but silently never fire the
+        // watcher. And chokidar's glob matcher only understands forward
+        // slashes, so joining an absolute Windows path produced a pattern that
+        // never matched anything — watch mode was dead on Windows regardless
+        // of the pattern.
+        this.watcher = chokidar.watch(this.pattern, {
+            cwd: this.rootPath,
             ignored: [
                 /(^|[\/\\])\../, // dotfiles
-                /node_modules/,
-                /generated/,
-                /\.dart_tool/,
-                /build/,
                 // CRITICAL: Ignore Flutter Intl files (any intl_*.arb including intl_zh_Hans_CN.arb)
                 /intl_.*\.arb$/,
             ],
@@ -42,7 +48,7 @@ export class FileWatcher {
             .on('add', (filePath) => this.handleChange('add', filePath))
             .on('change', (filePath) => this.handleChange('change', filePath))
             .on('unlink', (filePath) => this.handleChange('unlink', filePath))
-            .on('error', (error) => console.error('File watcher error:', error));
+            .on('error', (error) => this.trace(`File watcher error: ${error}`));
     }
 
     stop(): void {
@@ -57,7 +63,10 @@ export class FileWatcher {
         }
     }
 
-    private handleChange(event: string, filePath: string): void {
+    private handleChange(event: string, relativePath: string): void {
+        // chokidar reports paths relative to `cwd`; work in absolute terms.
+        const filePath = path.resolve(this.rootPath, relativePath);
+
         // Only react to .arb files
         if (!filePath.endsWith('.arb')) {
             return;
@@ -66,26 +75,24 @@ export class FileWatcher {
         // CRITICAL: Skip Flutter Intl files (any file starting with intl_)
         const fileName = path.basename(filePath);
         if (/^intl_.*\.arb$/.test(fileName)) {
-            console.log(`Skipping Flutter Intl file: ${fileName}`);
+            this.trace(`Skipping Flutter Intl file: ${fileName}`);
             return;
         }
 
-        // Ignore generated files
-        if (
-            filePath.includes('generated') ||
-            filePath.includes('.dart_tool') ||
-            filePath.includes('build')
-        ) {
+        // Ignore build output and generated files. Segment-wise, so a module
+        // legitimately named e.g. `build_order` is not silently skipped.
+        if (isInExcludedDirectory(filePath, this.rootPath)) {
+            this.trace(`Skipping excluded directory: ${relativePath}`);
             return;
         }
 
         // Validate that file has @@context before triggering
         if (event !== 'unlink' && !this.isModularL10nFile(filePath)) {
-            console.log(`Skipping non-Modular L10n file: ${fileName}`);
+            this.trace(`Skipping non-Modular L10n file: ${fileName}`);
             return;
         }
 
-        console.log(`File ${event}: ${filePath}`);
+        this.trace(`File ${event}: ${filePath}`);
 
         // Debounce to avoid multiple rapid regenerations
         if (this.debounceTimer) {
@@ -96,7 +103,7 @@ export class FileWatcher {
             try {
                 await this.onChange();
             } catch (error) {
-                console.error('Error in onChange callback:', error);
+                this.trace(`Error in onChange callback: ${error}`);
             }
         }, this.debounceMs);
     }

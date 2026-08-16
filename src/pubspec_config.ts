@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'yaml';
+import { LogLevel, normalizeLogLevel } from './log_level';
 
 /**
  * Configuration that can be read from pubspec.yaml under the `modular_l10n:` key.
@@ -17,19 +18,26 @@ import * as yaml from 'yaml';
  *   generate_combined_arb: true
  *   use_deferred_loading: false
  *   watch_mode: true
+ *   log_level: warning   # silent | error | warning | verbose
+ *
+ * Every field is optional. A key that is absent from pubspec.yaml stays
+ * `undefined` here so {@link mergeConfigs} can fall back to the VS Code
+ * setting for that key alone, rather than replacing the whole config.
  */
 export interface PubspecConfig {
     enabled: boolean;
-    className: string;
-    defaultLocale: string;
-    outputDir: string;
-    arbDirPattern: string;
-    generateCombinedArb: boolean;
-    useDeferredLoading: boolean;
-    watchMode: boolean;
+    className?: string;
+    defaultLocale?: string;
+    outputDir?: string;
+    arbDirPattern?: string;
+    generateCombinedArb?: boolean;
+    useDeferredLoading?: boolean;
+    watchMode?: boolean;
+    logLevel?: LogLevel;
 }
 
-const DEFAULT_CONFIG: PubspecConfig = {
+/** Values used when neither pubspec.yaml nor VS Code settings supply one. */
+export const DEFAULT_CONFIG: Required<PubspecConfig> = {
     enabled: true,
     className: 'ML',
     defaultLocale: 'en',
@@ -38,7 +46,17 @@ const DEFAULT_CONFIG: PubspecConfig = {
     generateCombinedArb: true,
     useDeferredLoading: false,
     watchMode: true,
+    logLevel: 'warning',
 };
+
+/** Only these types are accepted for a given key; anything else is ignored. */
+function asString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
+}
 
 export class PubspecConfigReader {
     private pubspecPath: string;
@@ -56,7 +74,11 @@ export class PubspecConfigReader {
 
     /**
      * Read the modular_l10n config from pubspec.yaml.
-     * Returns null if no config section exists.
+     * Returns null when the file has no `modular_l10n:` section at all.
+     *
+     * A section with `enabled: false` is still returned (with `enabled: false`)
+     * so callers can honour the off switch — returning null there would make it
+     * indistinguishable from "no config", and the extension would keep running.
      */
     readConfig(): PubspecConfig | null {
         if (!this.hasPubspec()) {
@@ -67,78 +89,91 @@ export class PubspecConfigReader {
             const content = fs.readFileSync(this.pubspecPath, 'utf-8');
             const doc = yaml.parse(content);
 
-            if (!doc || !doc['modular_l10n']) {
+            if (!doc || typeof doc !== 'object') {
                 return null;
             }
 
-            const cfg = doc['modular_l10n'];
-
-            if (cfg.enabled === false) {
+            const cfg = (doc as Record<string, unknown>)['modular_l10n'];
+            if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
                 return null;
             }
+
+            const c = cfg as Record<string, unknown>;
 
             return {
-                enabled: cfg.enabled !== false,
-                className: cfg.class_name || DEFAULT_CONFIG.className,
-                defaultLocale: cfg.default_locale || cfg.main_locale || DEFAULT_CONFIG.defaultLocale,
-                outputDir: cfg.output_dir || DEFAULT_CONFIG.outputDir,
-                arbDirPattern: cfg.arb_dir_pattern || DEFAULT_CONFIG.arbDirPattern,
-                generateCombinedArb: cfg.generate_combined_arb ?? DEFAULT_CONFIG.generateCombinedArb,
-                useDeferredLoading: cfg.use_deferred_loading ?? DEFAULT_CONFIG.useDeferredLoading,
-                watchMode: cfg.watch_mode ?? DEFAULT_CONFIG.watchMode,
+                enabled: asBoolean(c.enabled) ?? true,
+                className: asString(c.class_name),
+                defaultLocale: asString(c.default_locale) ?? asString(c.main_locale),
+                outputDir: asString(c.output_dir),
+                arbDirPattern: asString(c.arb_dir_pattern),
+                generateCombinedArb: asBoolean(c.generate_combined_arb),
+                useDeferredLoading: asBoolean(c.use_deferred_loading),
+                watchMode: asBoolean(c.watch_mode),
+                logLevel:
+                    c.log_level === undefined ? undefined : normalizeLogLevel(c.log_level),
             };
-        } catch (error) {
-            console.error('Error reading pubspec.yaml config:', error);
+        } catch {
+            // Malformed YAML: fall back to VS Code settings rather than throwing
+            // during activation. `generateTranslations` surfaces parse errors.
             return null;
         }
     }
 
     /**
-     * Write modular_l10n config section into pubspec.yaml.
-     * Used by the initialize command.
+     * Write the modular_l10n config section into pubspec.yaml.
+     *
+     * Edits the YAML document rather than the raw text. String surgery here is
+     * unsafe: `modular_l10n` is also a legitimate dependency name, so a
+     * substring search matches the entry under `dependencies:` and a regex
+     * replace anchored on it destroys the rest of the dependency block.
+     * Going through the parser guarantees the top-level node is the one edited,
+     * and the `yaml` package preserves surrounding comments and formatting.
      */
     writeConfig(config?: Partial<PubspecConfig>): void {
         if (!this.hasPubspec()) {
             throw new Error('pubspec.yaml not found');
         }
 
-        const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+        const merged: Required<PubspecConfig> = { ...DEFAULT_CONFIG, ...stripUndefined(config) };
 
         try {
-            let content = fs.readFileSync(this.pubspecPath, 'utf-8');
+            const content = fs.readFileSync(this.pubspecPath, 'utf-8');
+            const doc = yaml.parseDocument(content);
 
-            // Check if modular_l10n section already exists
-            if (content.includes('modular_l10n:')) {
-                // Replace existing section
-                content = content.replace(
-                    /modular_l10n:[\s\S]*?(?=\n\w|\n$|$)/,
-                    this.buildConfigYaml(mergedConfig)
+            if (doc.errors.length > 0) {
+                throw new Error(
+                    `pubspec.yaml is not valid YAML (${doc.errors[0].message}). ` +
+                    'Fix the file and try again.'
                 );
-            } else {
-                // Append at the end
-                content = content.trimEnd() + '\n\n' + this.buildConfigYaml(mergedConfig) + '\n';
             }
 
-            fs.writeFileSync(this.pubspecPath, content, 'utf-8');
+            doc.set('modular_l10n', {
+                enabled: merged.enabled,
+                class_name: merged.className,
+                default_locale: merged.defaultLocale,
+                output_dir: merged.outputDir,
+                arb_dir_pattern: merged.arbDirPattern,
+                generate_combined_arb: merged.generateCombinedArb,
+                use_deferred_loading: merged.useDeferredLoading,
+                watch_mode: merged.watchMode,
+                log_level: merged.logLevel,
+            });
+
+            fs.writeFileSync(this.pubspecPath, String(doc), 'utf-8');
         } catch (error) {
-            throw new Error(`Failed to write pubspec.yaml: ${error instanceof Error ? error.message : String(error)}`);
+            throw new Error(
+                `Failed to write pubspec.yaml: ${error instanceof Error ? error.message : String(error)}`
+            );
         }
     }
 
     /**
-     * Check if Flutter Intl config exists in pubspec.yaml
+     * Check if Flutter Intl config exists in pubspec.yaml.
+     * Reads the parsed document so a `flutter_intl` dependency entry is not
+     * mistaken for a top-level `flutter_intl:` config block.
      */
     hasFlutterIntlConfig(): boolean {
-        if (!this.hasPubspec()) {
-            return false;
-        }
-
-        try {
-            const content = fs.readFileSync(this.pubspecPath, 'utf-8');
-            return content.includes('flutter_intl:');
-        } catch {
-            return false;
-        }
+        return this.readFlutterIntlConfig() !== null;
     }
 
     /**
@@ -153,53 +188,41 @@ export class PubspecConfigReader {
             const content = fs.readFileSync(this.pubspecPath, 'utf-8');
             const doc = yaml.parse(content);
 
-            if (!doc || !doc['flutter_intl']) {
+            if (!doc || typeof doc !== 'object') {
                 return null;
             }
 
-            const cfg = doc['flutter_intl'];
+            const cfg = (doc as Record<string, unknown>)['flutter_intl'];
+            if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+                return null;
+            }
+
+            const c = cfg as Record<string, unknown>;
             return {
-                className: cfg.class_name || 'S',
-                outputDir: cfg.output_dir || 'lib/generated',
-                arbDir: cfg.arb_dir || 'lib/l10n',
+                className: asString(c.class_name) ?? 'S',
+                outputDir: asString(c.output_dir) ?? 'lib/generated',
+                arbDir: asString(c.arb_dir) ?? 'lib/l10n',
             };
         } catch {
             return null;
         }
     }
-
-    private buildConfigYaml(config: PubspecConfig): string {
-        const lines = [
-            'modular_l10n:',
-            `  enabled: ${config.enabled}`,
-            `  class_name: ${config.className}`,
-            `  default_locale: ${config.defaultLocale}`,
-            `  output_dir: ${config.outputDir}`,
-            `  arb_dir_pattern: "${config.arbDirPattern}"`,
-            `  generate_combined_arb: ${config.generateCombinedArb}`,
-            `  use_deferred_loading: ${config.useDeferredLoading}`,
-            `  watch_mode: ${config.watchMode}`,
-        ];
-        return lines.join('\n');
-    }
 }
 
-/**
- * Merge VS Code settings with pubspec.yaml config.
- * pubspec.yaml takes precedence when present.
- */
-export function mergeConfigs(
-    vscodeConfig: {
-        className: string;
-        outputPath: string;
-        defaultLocale: string;
-        arbFilePattern: string;
-        generateCombinedArb: boolean;
-        useDeferredLoading: boolean;
-        watchMode: boolean;
-    },
-    pubspecConfig: PubspecConfig | null
-): {
+/** Drop `undefined` values so they don't clobber defaults during a spread. */
+function stripUndefined<T extends object>(obj?: Partial<T>): Partial<T> {
+    if (!obj) return {};
+    const out: Partial<T> = {};
+    for (const [k, v] of Object.entries(obj)) {
+        if (v !== undefined) {
+            (out as Record<string, unknown>)[k] = v;
+        }
+    }
+    return out;
+}
+
+export interface EffectiveConfig {
+    enabled: boolean;
     className: string;
     outputPath: string;
     defaultLocale: string;
@@ -207,18 +230,36 @@ export function mergeConfigs(
     generateCombinedArb: boolean;
     useDeferredLoading: boolean;
     watchMode: boolean;
-} {
+    logLevel: LogLevel;
+}
+
+/**
+ * Merge VS Code settings with pubspec.yaml config, **per key**.
+ *
+ * A key present in pubspec.yaml wins; a key absent from it falls through to the
+ * VS Code setting, and only then to the built-in default. This matches the
+ * documented precedence — pubspec.yaml > VS Code settings > defaults — which a
+ * whole-object replacement would silently break for every key the team left out.
+ */
+export function mergeConfigs(
+    vscodeConfig: EffectiveConfig,
+    pubspecConfig: PubspecConfig | null
+): EffectiveConfig {
     if (!pubspecConfig) {
         return vscodeConfig;
     }
 
     return {
-        className: pubspecConfig.className,
-        outputPath: pubspecConfig.outputDir,
-        defaultLocale: pubspecConfig.defaultLocale,
-        arbFilePattern: pubspecConfig.arbDirPattern,
-        generateCombinedArb: pubspecConfig.generateCombinedArb,
-        useDeferredLoading: pubspecConfig.useDeferredLoading,
-        watchMode: pubspecConfig.watchMode,
+        enabled: pubspecConfig.enabled,
+        className: pubspecConfig.className ?? vscodeConfig.className,
+        outputPath: pubspecConfig.outputDir ?? vscodeConfig.outputPath,
+        defaultLocale: pubspecConfig.defaultLocale ?? vscodeConfig.defaultLocale,
+        arbFilePattern: pubspecConfig.arbDirPattern ?? vscodeConfig.arbFilePattern,
+        generateCombinedArb:
+            pubspecConfig.generateCombinedArb ?? vscodeConfig.generateCombinedArb,
+        useDeferredLoading:
+            pubspecConfig.useDeferredLoading ?? vscodeConfig.useDeferredLoading,
+        watchMode: pubspecConfig.watchMode ?? vscodeConfig.watchMode,
+        logLevel: pubspecConfig.logLevel ?? vscodeConfig.logLevel,
     };
 }

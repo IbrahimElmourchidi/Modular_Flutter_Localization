@@ -9,6 +9,12 @@ tsconfig.json
 # Node modules (bundled into dist/)
 node_modules/**
 
+# Previously built packages — never ship a VSIX inside a VSIX
+*.vsix
+
+# Release tooling
+publish.sh
+
 # Sourcemaps (not needed in production)
 **/*.map
 

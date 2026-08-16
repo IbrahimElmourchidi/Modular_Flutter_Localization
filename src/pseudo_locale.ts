@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Character map for pseudo-localization.
@@ -25,10 +26,10 @@ const PSEUDO_CHAR_MAP: Record<string, string> = {
  * Generate pseudo-localized translations from the default locale.
  * Creates a special locale (en_XA) with accented characters and expanded text.
  */
-export async function generatePseudoLocale(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function generatePseudoLocale(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -38,7 +39,7 @@ export async function generatePseudoLocale(outputChannel: vscode.OutputChannel):
     const { modules } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showInformationMessage('No modules found.');
+        await logger.notifyInfo('No modules found.');
         return;
     }
 
@@ -61,8 +62,8 @@ export async function generatePseudoLocale(outputChannel: vscode.OutputChannel):
     );
     if (!expansion) { return; }
 
-    outputChannel.show();
-    outputChannel.appendLine(`--- Generating pseudo-locale "${pseudoLocale}" ---`);
+    logger.reveal();
+    logger.summary(`--- Generating pseudo-locale "${pseudoLocale}" ---`);
 
     let fileCount = 0;
 
@@ -109,11 +110,11 @@ export async function generatePseudoLocale(outputChannel: vscode.OutputChannel):
 
         fs.writeFileSync(pseudoFilePath, JSON.stringify(pseudoData, null, 2), 'utf-8');
         fileCount++;
-        outputChannel.appendLine(`Created: ${pseudoFileName}`);
+        logger.info(`Created: ${pseudoFileName}`);
     }
 
-    outputChannel.appendLine(`\nGenerated ${fileCount} pseudo-locale file(s).`);
-    vscode.window.showInformationMessage(
+    logger.summary(`\nGenerated ${fileCount} pseudo-locale file(s).`);
+    await logger.notifyInfo(
         `Generated pseudo-locale "${pseudoLocale}" for ${fileCount} module(s). ` +
         'Run "Generate Translations" to include it.'
     );

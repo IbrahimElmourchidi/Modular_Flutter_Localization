@@ -4,14 +4,15 @@ import * as path from 'path';
 import { glob } from 'glob';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Rename a translation key across all ARB files and Dart code references.
  */
-export async function renameKey(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function renameKey(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -21,7 +22,7 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
     const { modules } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showInformationMessage('No modules found.');
+        await logger.notifyInfo('No modules found.');
         return;
     }
 
@@ -37,7 +38,7 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
     // Get keys from default locale
     const defaultArb = module.arbFiles.find(f => f.locale === config.defaultLocale);
     if (!defaultArb) {
-        vscode.window.showErrorMessage(`No default locale file found for module "${selectedModule}"`);
+        await logger.notifyError(`No default locale file found for module "${selectedModule}"`);
         return;
     }
 
@@ -45,13 +46,13 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
     try {
         arbData = JSON.parse(fs.readFileSync(defaultArb.path, 'utf-8'));
     } catch {
-        vscode.window.showErrorMessage('Failed to parse default ARB file');
+        await logger.notifyError('Failed to parse default ARB file');
         return;
     }
 
     const keys = Object.keys(arbData).filter(k => !k.startsWith('@'));
     if (keys.length === 0) {
-        vscode.window.showInformationMessage('No keys found in this module.');
+        await logger.notifyInfo('No keys found in this module.');
         return;
     }
 
@@ -85,8 +86,8 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
     });
     if (!newKey) { return; }
 
-    outputChannel.show();
-    outputChannel.appendLine(`--- Renaming "${oldKey.label}" → "${newKey}" in module "${selectedModule}" ---`);
+    logger.reveal();
+    logger.summary(`--- Renaming "${oldKey.label}" → "${newKey}" in module "${selectedModule}" ---`);
 
     // 1. Update all ARB files
     let arbUpdateCount = 0;
@@ -110,10 +111,11 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
 
                 fs.writeFileSync(arbFile.path, JSON.stringify(data, null, 2), 'utf-8');
                 arbUpdateCount++;
-                outputChannel.appendLine(`Updated: ${path.basename(arbFile.path)}`);
+                logger.info(`Updated: ${path.basename(arbFile.path)}`);
             }
         } catch (error) {
-            outputChannel.appendLine(`Error updating ${arbFile.path}: ${error}`);
+            logger.error(`Error updating ${arbFile.path}: ${error}`);
+            logger.reveal('error');
         }
     }
 
@@ -148,16 +150,17 @@ export async function renameKey(outputChannel: vscode.OutputChannel): Promise<vo
                     fs.writeFileSync(dartFile, updated, 'utf-8');
                     dartUpdateCount++;
                     const relPath = path.relative(rootPath, dartFile);
-                    outputChannel.appendLine(`Updated Dart: ${relPath}`);
+                    logger.info(`Updated Dart: ${relPath}`);
                 }
             } catch (error) {
-                outputChannel.appendLine(`Error updating ${dartFile}: ${error}`);
+                logger.error(`Error updating ${dartFile}: ${error}`);
+                logger.reveal('error');
             }
         }
     }
 
-    outputChannel.appendLine(`\nDone! Updated ${arbUpdateCount} ARB file(s) and ${dartUpdateCount} Dart file(s).`);
-    vscode.window.showInformationMessage(
+    logger.summary(`\nDone! Updated ${arbUpdateCount} ARB file(s) and ${dartUpdateCount} Dart file(s).`);
+    await logger.notifyInfo(
         `Renamed "${oldKey.label}" → "${newKey}": ${arbUpdateCount} ARB file(s), ${dartUpdateCount} Dart file(s)`
     );
 

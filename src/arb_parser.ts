@@ -23,10 +23,20 @@ export interface ParsedModule {
 }
 
 export class ArbParser {
-    async parseModules(modules: Module[], supportedLocales: string[]): Promise<ParsedModule[]> {
+    /**
+     * Sink for non-fatal parse problems. Routed through the extension's
+     * level-aware logger; defaults to a no-op.
+     */
+    constructor(private onWarning?: (message: string) => void) {}
+
+    async parseModules(
+        modules: Module[],
+        supportedLocales: string[],
+        defaultLocale?: string
+    ): Promise<ParsedModule[]> {
         const parsedModules: ParsedModule[] = [];
         for (const module of modules) {
-            const keys = await this.parseModule(module, supportedLocales);
+            const keys = await this.parseModule(module, supportedLocales, defaultLocale);
             parsedModules.push({
                 name: module.name,
                 path: module.path,
@@ -36,10 +46,29 @@ export class ArbParser {
         return parsedModules;
     }
 
-    private async parseModule(module: Module, supportedLocales: string[]): Promise<TranslationKey[]> {
+    private async parseModule(
+        module: Module,
+        supportedLocales: string[],
+        defaultLocale?: string
+    ): Promise<TranslationKey[]> {
         const keysMap: Map<string, TranslationKey> = new Map();
 
-        for (const arbFile of module.arbFiles) {
+        // Read the default-locale file first.
+        //
+        // `@key` metadata — descriptions, placeholder types, number and date
+        // formats — is authored once, in the default locale. Files arrive in
+        // glob (alphabetical) order, so reading them as-is means a locale that
+        // sorts earlier (ar before en) creates the key first, with no metadata,
+        // and the default locale's metadata is then never read: every parameter
+        // silently degrades to `Object` and every format directive is lost.
+        const orderedFiles = defaultLocale
+            ? [
+                ...module.arbFiles.filter((f) => f.locale === defaultLocale),
+                ...module.arbFiles.filter((f) => f.locale !== defaultLocale),
+            ]
+            : module.arbFiles;
+
+        for (const arbFile of orderedFiles) {
             const content = this.readArbFile(arbFile.path);
             for (const [key, value] of Object.entries(content)) {
                 // Skip metadata keys and Flutter Intl specific keys
@@ -47,17 +76,25 @@ export class ArbParser {
                     continue;
                 }
 
-                if (!keysMap.has(key)) {
-                    // Check for metadata
-                    const metadataKey = `@${key}`;
-                    const metadata = content[metadataKey] as Record<string, unknown> | undefined;
+                const metadata = content[`@${key}`] as Record<string, unknown> | undefined;
 
+                if (!keysMap.has(key)) {
                     keysMap.set(key, {
                         key,
                         translations: {},
                         description: metadata?.description as string | undefined,
-                        placeholders: this.parsePlaceholders(metadata?.placeholders as Record<string, unknown> | undefined),
+                        placeholders: this.parsePlaceholders(
+                            metadata?.placeholders as Record<string, unknown> | undefined
+                        ),
                     });
+                } else if (metadata) {
+                    // A non-default locale may still carry metadata the default
+                    // one omitted; fill gaps without overriding what's set.
+                    const existing = keysMap.get(key)!;
+                    existing.description ??= metadata.description as string | undefined;
+                    existing.placeholders ??= this.parsePlaceholders(
+                        metadata.placeholders as Record<string, unknown> | undefined
+                    );
                 }
 
                 keysMap.get(key)!.translations[arbFile.locale] = value as string;
@@ -75,7 +112,7 @@ export class ArbParser {
             const content = fs.readFileSync(filePath, 'utf-8');
             return JSON.parse(content);
         } catch (error) {
-            console.error(`Error reading ARB file ${filePath}:`, error);
+            this.onWarning?.(`Error reading ARB file ${filePath}: ${error}`);
             return {};
         }
     }
@@ -101,56 +138,63 @@ export class ArbParser {
         return result;
     }
 
+    /** Matches the head of an ICU block: `{var, plural|select|selectordinal,` */
+    private static readonly ICU_HEAD = /^\{(\w+)\s*,\s*(plural|select|selectordinal)\s*,/;
+
     /**
-     * Extract placeholders from a translation string.
-     * Handles complex ICU messages with nested braces.
-     * e.g., "Hello {name}" -> ["name"]
-     * e.g., "{count, plural, =0{none} other{{count} items}}" -> ["count"]
+     * Extract the placeholder names a message takes as parameters, in order of
+     * first appearance.
+     *
+     * Only *top-level* text is scanned. The interior of an ICU block is skipped
+     * entirely, because a case body is content, not a parameter list:
+     * `{gender, select, male{He} other{They}}` takes one parameter, `gender` —
+     * `He` and `They` are translations, and treating them as placeholders puts
+     * bogus arguments into the generated method signature.
+     *
+     * e.g. "Hello {name}"                                     -> ["name"]
+     * e.g. "{count, plural, =0{none} other{{count} items}}"    -> ["count"]
+     * e.g. "{g, select, male{He} other{They}} has {n} items"   -> ["g", "n"]
      */
     static extractPlaceholders(text: string): string[] {
-        const placeholders: Set<string> = new Set();
+        const placeholders: string[] = [];
+        const seen = new Set<string>();
 
-        // First pass: extract ICU message variable names
-        const icuVars: Set<string> = new Set();
-        const icuPattern = /\{(\w+)\s*,\s*(plural|select|selectordinal)\s*,/g;
-        let match;
-        while ((match = icuPattern.exec(text)) !== null) {
-            icuVars.add(match[1]);
-            placeholders.add(match[1]);
-        }
+        const add = (name: string) => {
+            if (!seen.has(name)) {
+                seen.add(name);
+                placeholders.push(name);
+            }
+        };
 
-        // Second pass: walk through the string tracking brace depth
-        // to find simple {varName} placeholders that are NOT inside ICU case content
         let i = 0;
         while (i < text.length) {
-            if (text[i] === '{') {
-                // Try to match a simple placeholder {word}
-                const simpleMatch = text.substring(i).match(/^\{(\w+)\}/);
-                if (simpleMatch) {
-                    const varName = simpleMatch[1];
-                    // Check if this is the start of an ICU expression
-                    const icuStartMatch = text.substring(i).match(/^\{(\w+)\s*,\s*(plural|select|selectordinal)\s*,/);
-                    if (icuStartMatch) {
-                        // This is an ICU variable, already added above — skip past the ICU block
-                        i = this.skipIcuBlock(text, i);
-                        continue;
-                    }
-                    // Check if we're inside an ICU block (nested reference)
-                    // ICU variables referenced inside their own block should still be added
-                    if (!icuVars.has(varName) || !this.isInsideIcuBlock(text, i)) {
-                        placeholders.add(varName);
-                    } else {
-                        // It's a nested reference to the ICU variable (e.g., {count} inside plural cases)
-                        // Already added from the first pass
-                    }
-                    i += simpleMatch[0].length;
-                    continue;
-                }
+            if (text[i] !== '{') {
+                i++;
+                continue;
             }
+
+            const rest = text.substring(i);
+
+            // An ICU block contributes its control variable, then is skipped whole.
+            const icuHead = rest.match(this.ICU_HEAD);
+            if (icuHead) {
+                add(icuHead[1]);
+                i = this.skipIcuBlock(text, i);
+                continue;
+            }
+
+            // A plain {name} placeholder.
+            const simple = rest.match(/^\{(\w+)\}/);
+            if (simple) {
+                add(simple[1]);
+                i += simple[0].length;
+                continue;
+            }
+
             i++;
         }
 
-        return Array.from(placeholders);
+        return placeholders;
     }
 
     /**
@@ -172,31 +216,6 @@ export class ArbParser {
     }
 
     /**
-     * Check if a position in the text is inside an ICU message block.
-     */
-    private static isInsideIcuBlock(text: string, position: number): boolean {
-        let braceDepth = 0;
-        let inIcu = false;
-
-        for (let i = 0; i < position; i++) {
-            if (text[i] === '{') {
-                braceDepth++;
-                const remaining = text.substring(i);
-                if (/^\{\w+\s*,\s*(plural|select|selectordinal)\s*,/.test(remaining)) {
-                    inIcu = true;
-                }
-            } else if (text[i] === '}') {
-                braceDepth--;
-                if (braceDepth === 0) {
-                    inIcu = false;
-                }
-            }
-        }
-
-        return braceDepth > 0 && inIcu;
-    }
-
-    /**
      * Check if a translation has ICU message syntax (plural, select, selectordinal)
      */
     static hasIcuSyntax(text: string): boolean {
@@ -213,8 +232,13 @@ export class ArbParser {
     }
 
     /**
-     * Extract all ICU segments from a message string.
-     * Each segment represents one {var, plural/select/selectordinal, ...} block.
+     * Extract the **top-level** ICU segments from a message string.
+     * Each segment represents one `{var, plural|select|selectordinal, ...}` block.
+     *
+     * Blocks nested inside another block are not returned: they belong to their
+     * parent's case content and are rendered as part of it. Returning them would
+     * produce overlapping ranges, and would make a message with a single nested
+     * block look like a compound message to {@link isCompoundMessage}.
      */
     static getIcuSegments(text: string): {
         variable: string;
@@ -231,23 +255,21 @@ export class ArbParser {
             raw: string;
         }[] = [];
 
-        const pattern = /\{(\w+)\s*,\s*(plural|select|selectordinal)\s*,/g;
-        let match;
-
-        while ((match = pattern.exec(text)) !== null) {
-            const start = match.index;
-            let braceDepth = 0;
-            let end = start;
-            for (let i = start; i < text.length; i++) {
-                if (text[i] === '{') braceDepth++;
-                else if (text[i] === '}') {
-                    braceDepth--;
-                    if (braceDepth === 0) {
-                        end = i + 1;
-                        break;
-                    }
-                }
+        let i = 0;
+        while (i < text.length) {
+            if (text[i] !== '{') {
+                i++;
+                continue;
             }
+
+            const match = text.substring(i).match(this.ICU_HEAD);
+            if (!match) {
+                i++;
+                continue;
+            }
+
+            const start = i;
+            const end = this.skipIcuBlock(text, start);
             segments.push({
                 variable: match[1],
                 type: match[2] as 'plural' | 'select' | 'selectordinal',
@@ -255,6 +277,9 @@ export class ArbParser {
                 end,
                 raw: text.substring(start, end),
             });
+
+            // Resume *after* the block so nested heads are not reported.
+            i = end;
         }
 
         return segments;
@@ -304,22 +329,32 @@ export class ArbParser {
     }
 
     /**
-     * Extract the ordered placeholder names from metadata.
-     * This ensures parameter order matches the ARB specification.
+     * The canonical, ordered parameter list for a message.
+     *
+     * ARB lets `@key.placeholders` declare the intended parameter order, so that
+     * wins — but only for names the message actually uses. A metadata entry for a
+     * placeholder that no longer appears in the text would otherwise add a
+     * parameter nothing supplies, and a placeholder used in the text but missing
+     * from metadata would be dropped from the signature entirely.
+     *
+     * This list is computed once per key from the default locale and reused for
+     * every locale's lookup entry, so positional `Function.apply` dispatch stays
+     * consistent when a translator reorders placeholders.
      */
     static getOrderedPlaceholders(
         text: string,
         metadata?: Record<string, PlaceholderInfo>
     ): string[] {
+        const used = this.extractPlaceholders(text);
         if (!metadata) {
-            return this.extractPlaceholders(text);
+            return used;
         }
 
-        const orderedKeys = Object.keys(metadata);
-        if (orderedKeys.length > 0) {
-            return orderedKeys;
-        }
+        const usedSet = new Set(used);
+        const declared = Object.keys(metadata).filter((name) => usedSet.has(name));
+        const declaredSet = new Set(declared);
 
-        return this.extractPlaceholders(text);
+        // Metadata order first, then anything the text uses that metadata omitted.
+        return [...declared, ...used.filter((name) => !declaredSet.has(name))];
     }
 }

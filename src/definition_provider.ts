@@ -21,6 +21,9 @@ export class TranslationDefinitionProvider implements vscode.DefinitionProvider 
 
         const rootPath = workspaceFolders[0].uri.fsPath;
         const config = getEffectiveConfig(rootPath);
+        if (!config.enabled) {
+            return undefined;
+        }
         const className = config.className;
 
         const line = document.lineAt(position).text;

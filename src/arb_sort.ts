@@ -3,15 +3,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Sort ARB file keys alphabetically, keeping metadata (@key) adjacent to its key
  * and @@-prefixed meta keys at the top.
  */
-export async function sortArbKeys(outputChannel: vscode.OutputChannel): Promise<void> {
+export async function sortArbKeys(logger: Logger): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -21,7 +22,7 @@ export async function sortArbKeys(outputChannel: vscode.OutputChannel): Promise<
     const { modules } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showInformationMessage('No modules found.');
+        await logger.notifyInfo('No modules found.');
         return;
     }
 
@@ -60,18 +61,20 @@ export async function sortArbKeys(outputChannel: vscode.OutputChannel): Promise<
                 if (newContent !== content) {
                     fs.writeFileSync(arbFile.path, newContent, 'utf-8');
                     sortedCount++;
-                    outputChannel.appendLine(`Sorted: ${path.basename(arbFile.path)}`);
+                    logger.info(`Sorted: ${path.basename(arbFile.path)}`);
                 }
             } catch (error) {
-                outputChannel.appendLine(`Error sorting ${arbFile.path}: ${error}`);
+                logger.error(`Error sorting ${arbFile.path}: ${error}`);
+                logger.reveal('error');
             }
         }
     }
 
     if (sortedCount > 0) {
-        vscode.window.showInformationMessage(`Sorted keys in ${sortedCount} ARB file(s).`);
+        logger.summary(`Sorted keys in ${sortedCount} ARB file(s).`);
+        await logger.notifyInfo(`Sorted keys in ${sortedCount} ARB file(s).`);
     } else {
-        vscode.window.showInformationMessage('All ARB files are already sorted.');
+        await logger.notifyInfo('All ARB files are already sorted.');
     }
 }
 

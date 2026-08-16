@@ -664,6 +664,14 @@ ML.of(context).orders.orderDate(DateTime(2024, 1, 15))
 
 **Available date formats:** `yMd`, `yMMMMd`, `jm`, `Hm`, and [more from Intl](https://api.flutter.dev/flutter/intl/DateFormat-class.html).
 
+> **`DateFormat` needs locale data loaded.** `GlobalMaterialLocalizations.delegate`
+> loads it for you, so date placeholders work out of the box in any app that
+> follows the [Flutter Setup](#-flutter-setup) above. Outside that — a pure Dart
+> script, a unit test, or an app without the global delegates — call
+> `initializeDateFormatting(localeName)` from
+> `package:intl/date_symbol_data_local.dart` first, or `DateFormat` throws
+> `LocaleDataException`. Number placeholders have no such requirement.
+
 ### 6. Compound ICU Messages
 
 Multiple ICU expressions in one string:
@@ -704,6 +712,7 @@ The extension works **out-of-the-box** with these defaults:
 | `watchMode` | `true` | Auto-regenerate on ARB file changes |
 | `generateCombinedArb` | `true` | Create combined ARB files in output directory |
 | `useDeferredLoading` | `false` | Enable lazy-loading for web optimization |
+| `logLevel` | `warning` | How chatty the extension is (see [Log Verbosity](#-log-verbosity)) |
 
 ### When to Configure
 
@@ -726,6 +735,8 @@ modular_l10n:
   generate_combined_arb: true
   use_deferred_loading: false
   watch_mode: true
+  # silent | error | warning | verbose
+  log_level: warning
 ```
 
 ### Option 2: VS Code Settings
@@ -739,11 +750,64 @@ modular_l10n:
   "modularL10n.arbFilePattern": "**/l10n/*.arb",
   "modularL10n.generateCombinedArb": true,
   "modularL10n.useDeferredLoading": false,
-  "modularL10n.watchMode": true
+  "modularL10n.watchMode": true,
+  "modularL10n.logLevel": "warning"
 }
 ```
 
-**Priority:** `pubspec.yaml` > VS Code settings > defaults
+**Priority:** `pubspec.yaml` > VS Code settings > defaults — applied **per key**.
+A key you leave out of the `modular_l10n:` block falls through to your VS Code
+setting, and only then to the built-in default. So a team can pin just
+`class_name` in version control without disturbing anyone's personal settings.
+
+### Turning it off
+
+`enabled: false` stands the extension down for that project: no generation, no
+watching, no diagnostics, no hover or go-to-definition, no extract code action.
+**Initialize** and **Check Compatibility** still run, so you can switch it back
+on without hand-editing YAML.
+
+```yaml
+modular_l10n:
+  enabled: false
+```
+
+---
+
+## 🔊 Log Verbosity
+
+Watch mode regenerates on every ARB save, so the extension can get loud. Dial it
+down with `modularL10n.logLevel` (VS Code) or `modular_l10n.log_level`
+(`pubspec.yaml`):
+
+| Level | Output panel | Panel auto-reveals | Notifications |
+|-------|--------------|--------------------|---------------|
+| `silent` | nothing | never | none |
+| `error` | failures only | on failure | errors only |
+| `warning` **(default)** | failures, warnings, one-line result summaries | on warning or failure | errors, warnings, successes |
+| `verbose` | everything — every file written, every module scanned | on any run | all |
+
+```yaml
+# pubspec.yaml — quiet down a noisy watch-mode project
+modular_l10n:
+  log_level: error
+```
+
+```json
+// .vscode/settings.json — turn everything on while debugging a generation issue
+{ "modularL10n.logLevel": "verbose" }
+```
+
+**What is never suppressed:** prompts that require an answer — overwrite
+confirmations, the `Delete` confirmation on *Remove Locale*, and Flutter Intl
+conflict resolution. Silencing those would change behaviour, not just verbosity.
+
+**On-save diagnostics** (the automatic run triggered by saving an `.arb` file) no
+longer steal focus or raise notifications at any level. Findings still land in
+the Problems panel; run **Check Missing Translations** for the interactive report.
+
+Changing `log_level` in `pubspec.yaml` takes effect on the next command — no
+window reload required.
 
 ---
 
@@ -1011,6 +1075,16 @@ MaterialApp(
 | Files ignored during scan | Missing `@@context` or `@@locale` | Add both properties to ARB file |
 | Wrong file pattern | Custom directory structure | Update `arbFilePattern` in config |
 | Conflicting with Flutter Intl | File named `intl_*.arb` | Rename to `{module}_{locale}.arb` |
+| Nothing happens at all | `enabled: false` in `pubspec.yaml` | Set `modular_l10n.enabled: true` |
+| Module inside a folder named `build`, `generated`, `dist`, `output`, or `tmp` | Those directory names are excluded | Rename the folder — the exclusion is by exact directory name, so `build_order` and `generated_reports` are fine |
+
+### Placeholders and Parameters
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Parameters typed `Object` instead of `String`/`int` | `@key` metadata lives only in the **default locale** file | Add `placeholders` metadata to the default-locale ARB |
+| Translation shows the wrong value in one parameter | A translation uses a placeholder the default locale doesn't declare | The Output panel names the key and locale; add the placeholder to the default-locale ARB |
+| `LocaleDataException` from a date placeholder | Date symbols not loaded | Register `GlobalMaterialLocalizations.delegate`, or call `initializeDateFormatting()` — see [Date/Time Formatting](#5-datetime-formatting) |
 
 ### In-App Language Switching
 

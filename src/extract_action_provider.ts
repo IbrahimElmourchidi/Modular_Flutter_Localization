@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Detect the string literal surrounding the cursor position.
@@ -330,6 +331,12 @@ export class ExtractToArbProvider implements vscode.CodeActionProvider {
             return undefined;
         }
 
+        // Stay out of the way when switched off in pubspec.yaml
+        const folders = vscode.workspace.workspaceFolders;
+        if (folders && !getEffectiveConfig(folders[0].uri.fsPath).enabled) {
+            return undefined;
+        }
+
         let stringRange: vscode.Range | undefined;
 
         // Check if there's a non-empty selection that looks like a full string literal
@@ -430,11 +437,11 @@ function parseStringLiteral(text: string): {
 export async function executeExtractToArb(
     document: vscode.TextDocument,
     range: vscode.Range,
-    outputChannel: vscode.OutputChannel
+    logger: Logger
 ): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -454,7 +461,7 @@ export async function executeExtractToArb(
 
     // Warn about complex expressions
     if (hasComplexExpressions) {
-        const proceed = await vscode.window.showWarningMessage(
+        const proceed = await logger.ask(
             'This string contains complex interpolation expressions (e.g., ${expr}). ' +
             'The placeholders may need manual adjustment in the ARB file.',
             'Continue', 'Cancel'
@@ -469,7 +476,7 @@ export async function executeExtractToArb(
     const { modules, detectedLocales } = await scanner.scanModules();
 
     if (modules.length === 0) {
-        vscode.window.showErrorMessage(
+        await logger.notifyError(
             'No modules found. Run "Modular L10n: Initialize" or create ARB files first.'
         );
         return;
@@ -518,7 +525,7 @@ export async function executeExtractToArb(
 
                 // Check for duplicate key
                 if (arbData[keyName] !== undefined) {
-                    const overwrite = await vscode.window.showWarningMessage(
+                    const overwrite = await logger.ask(
                         `Key "${keyName}" already exists in ${path.basename(arbFile.path)}. Overwrite?`,
                         'Yes',
                         'No'
@@ -555,15 +562,16 @@ export async function executeExtractToArb(
 
                 fs.writeFileSync(arbFile.path, JSON.stringify(arbData, null, 2), 'utf-8');
                 addedCount++;
-                outputChannel.appendLine(`Added "${keyName}" to ${path.basename(arbFile.path)}`);
+                logger.info(`Added "${keyName}" to ${path.basename(arbFile.path)}`);
             } catch (error) {
-                outputChannel.appendLine(`Error updating ${arbFile.path}: ${error}`);
+                logger.error(`Error updating ${arbFile.path}: ${error}`);
+                logger.reveal('error');
             }
         }
     }
 
     if (addedCount === 0) {
-        vscode.window.showErrorMessage('Failed to add key to any ARB file.');
+        await logger.notifyError('Failed to add key to any ARB file.');
         return;
     }
 
@@ -587,7 +595,7 @@ export async function executeExtractToArb(
     edit.replace(document.uri, range, replacement);
     await vscode.workspace.applyEdit(edit);
 
-    vscode.window.showInformationMessage(
+    await logger.notifyInfo(
         `Extracted "${keyName}" to ${selectedModule} module (${addedCount} locale file(s))`
     );
 

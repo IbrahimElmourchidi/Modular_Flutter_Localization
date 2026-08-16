@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
+import { Logger } from './logger';
 
 /**
  * Provides diagnostics for missing translations across locales.
@@ -27,15 +28,24 @@ export class MissingTranslationDiagnostics {
     /**
      * Run diagnostics on all modules, reporting missing translations.
      */
-    async runDiagnostics(outputChannel: vscode.OutputChannel): Promise<void> {
+    async runDiagnostics(
+        logger: Logger,
+        /**
+         * `auto: true` for the on-save run. Automatic runs never steal focus
+         * and never raise notifications — the Problems panel is the signal.
+         */
+        options: { auto?: boolean } = {}
+    ): Promise<void> {
+        const auto = options.auto === true;
+
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
-            vscode.window.showWarningMessage('No workspace folder open.');
+            if (!auto) await logger.notifyWarning('No workspace folder open.');
             return;
         }
 
-        outputChannel.appendLine('Checking for missing translations...');
-        outputChannel.show();
+        logger.info('Checking for missing translations...');
+        if (!auto) logger.reveal();
 
         const rootPath = workspaceFolders[0].uri.fsPath;
         const config = getEffectiveConfig(rootPath);
@@ -45,12 +55,16 @@ export class MissingTranslationDiagnostics {
         this.diagnosticCollection.clear();
 
         if (modules.length === 0) {
-            outputChannel.appendLine('No modules found. Make sure your ARB files have @@locale and @@context properties.');
-            vscode.window.showWarningMessage('No L10n modules found. Check that ARB files contain @@locale and @@context.');
+            logger.warn('No modules found. Make sure your ARB files have @@locale and @@context properties.');
+            if (!auto) {
+                await logger.notifyWarning(
+                    'No L10n modules found. Check that ARB files contain @@locale and @@context.'
+                );
+            }
             return;
         }
 
-        outputChannel.appendLine(`Found ${modules.length} module(s) with ${detectedLocales.length} locale(s): ${detectedLocales.join(', ')}`);
+        logger.info(`Found ${modules.length} module(s) with ${detectedLocales.length} locale(s): ${detectedLocales.join(', ')}`);
 
         let totalMissing = 0;
 
@@ -155,11 +169,19 @@ export class MissingTranslationDiagnostics {
         }
 
         if (totalMissing > 0) {
-            outputChannel.appendLine(`Found ${totalMissing} missing/empty translation(s). Check the Problems panel.`);
-            vscode.window.showWarningMessage(`Found ${totalMissing} missing/empty translation(s). Check the Problems panel.`);
+            logger.summary(
+                `Found ${totalMissing} missing/empty translation(s). Check the Problems panel.`
+            );
+            if (!auto) {
+                await logger.notifyWarning(
+                    `Found ${totalMissing} missing/empty translation(s). Check the Problems panel.`
+                );
+            }
         } else {
-            outputChannel.appendLine('All translations are complete!');
-            vscode.window.showInformationMessage('All translations are complete!');
+            logger.summary('All translations are complete!');
+            if (!auto) {
+                await logger.notifyInfo('All translations are complete!');
+            }
         }
     }
 }

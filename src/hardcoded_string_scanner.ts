@@ -2,6 +2,27 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
+import { Logger } from './logger';
+
+/**
+ * Single shared collection for hardcoded-string hints.
+ *
+ * Created lazily and reused, so repeated scans replace their findings instead
+ * of stacking a new undisposable collection into the Problems panel each run.
+ * Registered via {@link disposeHardcodedDiagnostics} on deactivate.
+ */
+let hardcodedDiagnostics: vscode.DiagnosticCollection | undefined;
+
+function getHardcodedDiagnostics(): vscode.DiagnosticCollection {
+    hardcodedDiagnostics ??= vscode.languages.createDiagnosticCollection('modularL10n.hardcoded');
+    return hardcodedDiagnostics;
+}
+
+/** Dispose the shared collection. Called from the extension's deactivate(). */
+export function disposeHardcodedDiagnostics(): void {
+    hardcodedDiagnostics?.dispose();
+    hardcodedDiagnostics = undefined;
+}
 
 /**
  * Result of scanning a single file for hardcoded strings.
@@ -113,11 +134,11 @@ const EXCLUDE_PATTERNS = [
  * Scan all Dart files in lib/ for hardcoded user-facing strings.
  */
 export async function scanHardcodedStrings(
-    outputChannel: vscode.OutputChannel
+    logger: Logger
 ): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder found');
+        await logger.notifyError('No workspace folder found');
         return;
     }
 
@@ -125,12 +146,12 @@ export async function scanHardcodedStrings(
     const libPath = path.join(rootPath, 'lib');
 
     if (!fs.existsSync(libPath)) {
-        vscode.window.showErrorMessage('No lib/ directory found');
+        await logger.notifyError('No lib/ directory found');
         return;
     }
 
-    outputChannel.show();
-    outputChannel.appendLine('--- Scanning for hardcoded strings ---');
+    logger.reveal('warning');
+    logger.summary('--- Scanning for hardcoded strings ---');
 
     const dartFiles = await findDartFiles(libPath);
     const results: HardcodedStringResult[] = [];
@@ -168,14 +189,17 @@ export async function scanHardcodedStrings(
         }
     );
 
+    const diagnosticCollection = getHardcodedDiagnostics();
+    diagnosticCollection.clear();
+
     // Show results
     if (results.length === 0) {
-        vscode.window.showInformationMessage('No hardcoded user-facing strings found!');
-        outputChannel.appendLine('No hardcoded strings found.');
+        logger.summary('No hardcoded strings found.');
+        await logger.notifyInfo('No hardcoded user-facing strings found!');
         return;
     }
 
-    outputChannel.appendLine(`Found ${results.length} potential hardcoded string(s):\n`);
+    logger.summary(`Found ${results.length} potential hardcoded string(s):\n`);
 
     // Group by file
     const byFile = new Map<string, HardcodedStringResult[]>();
@@ -188,18 +212,17 @@ export async function scanHardcodedStrings(
     }
 
     for (const [filePath, fileResults] of byFile) {
-        outputChannel.appendLine(`${filePath}:`);
+        logger.summary(`${filePath}:`);
         for (const r of fileResults) {
-            outputChannel.appendLine(`  Line ${r.line + 1}: ${r.text.trim()}`);
-            outputChannel.appendLine(`    Context: ${r.context.trim()}`);
+            logger.summary(`  Line ${r.line + 1}: ${r.text.trim()}`);
+            logger.info(`    Context: ${r.context.trim()}`);
         }
-        outputChannel.appendLine('');
+        logger.blank('warning');
     }
 
-    outputChannel.appendLine(`Total: ${results.length} hardcoded string(s) in ${byFile.size} file(s)`);
+    logger.summary(`Total: ${results.length} hardcoded string(s) in ${byFile.size} file(s)`);
 
     // Also show as diagnostics
-    const diagnosticCollection = vscode.languages.createDiagnosticCollection('modularL10n.hardcoded');
     for (const [, fileResults] of byFile) {
         if (fileResults.length === 0) { continue; }
         const uri = vscode.Uri.file(fileResults[0].filePath);
@@ -217,7 +240,7 @@ export async function scanHardcodedStrings(
         diagnosticCollection.set(uri, diagnostics);
     }
 
-    vscode.window.showInformationMessage(
+    await logger.notifyInfo(
         `Found ${results.length} hardcoded string(s) in ${byFile.size} file(s). Check the Output/Problems panel.`
     );
 }
