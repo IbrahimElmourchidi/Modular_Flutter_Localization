@@ -80,8 +80,9 @@ lib/
 │           └── settings_ar.arb
 ├── generated/
 │   └── modular_l10n/            ← Auto-generated (DON'T EDIT!)
-│       ├── ml.dart              ← Main entry point
-│       ├── auth_l10n.dart       ← Auth module class
+│       ├── ml.dart              ← Main entry point — import this
+│       ├── l10n.dart            ← Barrel that re-exports the entry point
+│       ├── auth_l10n.dart       ← Auth module class (part of ml.dart)
 │       ├── home_l10n.dart
 │       ├── settings_l10n.dart
 │       ├── app_localization_delegate.dart
@@ -91,6 +92,10 @@ lib/
 │           └── modular_messages_ar.dart
 └── main.dart
 ```
+
+> ⚠️ **Only `l10n.dart` / `ml.dart` may be imported.** Every
+> `<module>_l10n.dart` is a `part of` `ml.dart`, so importing one is a compile
+> error. See [One entry point](#one-entry-point).
 
 ---
 
@@ -213,6 +218,59 @@ Only needed if you want to **change language without restarting the app**.
 ---
 
 ## 💻 Using Translations in Code
+
+### One entry point
+
+Everything goes through one generated file. Import the barrel (or `ml.dart` if
+you prefer the shorter path) and reach strings via `ML`:
+
+```dart
+import 'package:your_app/generated/modular_l10n/l10n.dart';
+
+Text(ML.of(context).auth.loginButton)
+```
+
+**Never import a `<module>_l10n.dart` file.** Those are `part of` `ml.dart`, so
+`import '…/auth_l10n.dart'` does not compile. The module classes stay public, so
+you can still use them as *types* — which is what makes passing translations down
+to a child widget work with a single import:
+
+```dart
+import 'package:your_app/generated/modular_l10n/l10n.dart';
+
+class CartItems extends StatelessWidget {
+  const CartItems({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // Read once from context — this subscribes the widget to locale changes.
+    final l10n = ML.of(context).cart;
+    return CartItemsList(l10n: l10n);
+  }
+}
+
+class CartItemsList extends StatelessWidget {
+  const CartItemsList({required this.l10n, super.key});
+
+  final CartL10n l10n; // ← type from the same single import
+
+  @override
+  Widget build(BuildContext context) => Text(l10n.emptyCartTitle);
+}
+```
+
+Two reasons this matters beyond tidiness: reading through `ML.of(context)`
+registers a dependency on the locale, so the widget rebuilds when the user
+switches language, whereas `XxxL10n.instance` reads whatever the last
+`ML.load` left in a static.
+
+If you are upgrading from a version that allowed direct module imports, set
+`modular_l10n.module_access: library` in `pubspec.yaml` to keep the old layout
+while you migrate. Then, per file: **replace** `import '…/<module>_l10n.dart';`
+with `import '…/l10n.dart';` — or just delete it if the file already imports the
+barrel. The type names still resolve either way, because the barrel re-exports
+the module classes. The extension flags anything you miss with a quick fix that
+does the replacement for you. See [moduleAccess](#moduleaccess).
 
 ### In Widgets (with BuildContext)
 
@@ -712,6 +770,7 @@ The extension works **out-of-the-box** with these defaults:
 | `watchMode` | `true` | Auto-regenerate on ARB file changes |
 | `generateCombinedArb` | `true` | Create combined ARB files in output directory |
 | `useDeferredLoading` | `false` | Enable lazy-loading for web optimization |
+| `moduleAccess` | `part` | Module files are parts of the entry point; only `l10n.dart`/`ml.dart` may be imported (see [One entry point](#one-entry-point)) |
 | `logLevel` | `warning` | How chatty the extension is (see [Log Verbosity](#-log-verbosity)) |
 
 ### When to Configure
@@ -737,6 +796,8 @@ modular_l10n:
   watch_mode: true
   # silent | error | warning | verbose
   log_level: warning
+  # part | library
+  module_access: part
 ```
 
 ### Option 2: VS Code Settings
@@ -751,7 +812,8 @@ modular_l10n:
   "modularL10n.generateCombinedArb": true,
   "modularL10n.useDeferredLoading": false,
   "modularL10n.watchMode": true,
-  "modularL10n.logLevel": "warning"
+  "modularL10n.logLevel": "warning",
+  "modularL10n.moduleAccess": "part"
 }
 ```
 
@@ -759,6 +821,21 @@ modular_l10n:
 A key you leave out of the `modular_l10n:` block falls through to your VS Code
 setting, and only then to the built-in default. So a team can pin just
 `class_name` in version control without disturbing anyone's personal settings.
+
+### moduleAccess
+
+`moduleAccess` (`module_access` in `pubspec.yaml`) decides how the module files
+relate to the generated entry point:
+
+| Value | Layout | Direct module imports |
+|-------|--------|-----------------------|
+| `part` (default) | `<module>_l10n.dart` is `part of '<class>.dart'` | Compile error — flagged by the extension with a quick fix |
+| `library` | Each `<module>_l10n.dart` is its own library | Allowed |
+
+`part` is the default because a single entry point is what keeps locale changes
+and test overrides honest — there is exactly one way to get a module, and it
+goes through `ML`. Set `library` only while migrating an existing project; it is
+kept as an escape hatch, not as a supported style.
 
 ### Turning it off
 
@@ -899,6 +976,18 @@ Warnings appear automatically in the **Problems panel** when:
 Diagnostics run automatically when you save any ARB file.
 
 You can also trigger them manually: `Modular L10n: Check Missing Translations`
+
+### Direct Module Import Diagnostics
+
+A warning appears on any `import '…/<module>_l10n.dart'` in your own code, on
+open and on save. The analyzer's own message for this
+(`can't have a part-of directive`) doesn't say what to do next, so the
+extension names the fix and offers a quick fix that repoints the import at
+`ml.dart`.
+
+Repointing is enough when the module class was imported only to *type* a
+parameter. Code that called `XxxL10n.instance` or `.load` still has to move to
+`ML.of(context)` / `ML.current` — no import rewrite can do that for you.
 
 ---
 
@@ -1067,6 +1156,8 @@ MaterialApp(
 | `No instance of ML present` | Delegate not registered | Ensure `ML.delegate` is in `localizationsDelegates` list |
 | `Undefined class 'ML'` | Generated files not imported | Import `package:your_app/generated/modular_l10n/l10n.dart` |
 | `The getter 'auth' isn't defined` | Module not generated | Run `Modular L10n: Generate Translations` |
+| `The imported library '…_l10n.dart' can't have a part-of directive` | A module file was imported directly | Replace that `import` with one of `l10n.dart` (or delete it if the barrel is already imported) — see [One entry point](#one-entry-point). Regenerate first if you have not upgraded, or set `module_access: library` while you migrate |
+| `Undefined name 'AuthL10n'` right after fixing an import | The class is reachable, but the file no longer is | Import `l10n.dart`/`ml.dart`; it re-exports every module class |
 
 ### ARB Files Not Detected
 
@@ -1169,7 +1260,27 @@ Access: `ML.of(context).auth.loginButton`
 lib/generated/modular_l10n/arb/
 ```
 
-### 5. Migration Strategy
+### 5. One Entry Point
+
+Read translations through `ML.of(context)` (widgets) or `ML.current` (everything
+else), and import only `l10n.dart` / `ml.dart`. Module classes are fine as
+parameter *types* — that's how you pass a module down to a child widget — but the
+file itself is not an import target.
+
+```dart
+// ✅ One import, read through ML, type flows down
+import 'package:your_app/generated/modular_l10n/l10n.dart';
+
+final l10n = ML.of(context).cart;
+return CartItemsList(l10n: l10n);
+
+// ❌ Bypasses context, so no rebuild when the locale changes
+import 'package:your_app/generated/modular_l10n/cart_l10n.dart';
+
+Text(CartL10n.instance.emptyCartTitle)
+```
+
+### 6. Migration Strategy
 
 When migrating existing Flutter Intl projects:
 

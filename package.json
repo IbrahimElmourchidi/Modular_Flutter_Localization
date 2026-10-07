@@ -2,7 +2,7 @@
   "name": "modular-flutter-l10n",
   "displayName": "Modular Flutter L10n",
   "description": "Modular localization for Flutter with full Flutter Intl compatibility. Organize translations by feature/module for better scalability.",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "publisher": "UtaniumOrg",
   "icon": "images/icon.png",
   "engines": {
@@ -277,6 +277,19 @@
           "default": false,
           "description": "Generate localization code that uses deferred loading (recommended for web apps)"
         },
+        "modularL10n.moduleAccess": {
+          "type": "string",
+          "default": "part",
+          "enum": [
+            "part",
+            "library"
+          ],
+          "enumDescriptions": [
+            "Each <module>_l10n.dart is a part of the generated entry-point library, so importing one is a compile error and ml.dart (or l10n.dart) is the only way in. Module classes stay public, so their types can still be used to pass translations down.",
+            "Each <module>_l10n.dart is its own library and may be imported directly. Use this while migrating an existing project away from direct module imports."
+          ],
+          "markdownDescription": "How the generated module files relate to the generated entry point.\n\nWith `part`, `import '…/auth_l10n.dart'` fails to compile and the extension flags it with a quick fix. Set this to `library` if you need direct module imports back.\n\nCan also be set per-project in `pubspec.yaml` as `modular_l10n.module_access`, which takes precedence."
+        },
         "modularL10n.watchMode": {
           "type": "boolean",
           "default": true,
@@ -308,7 +321,7 @@
     }
   },
   "scripts": {
-    "installLocal": "code --install-extension modular-flutter-l10n-3.1.0.vsix --force",
+    "installLocal": "code --install-extension modular-flutter-l10n-4.0.0.vsix --force",
     "compile": "tsc -p ./",
     "compile:prod": "tsc -p ./ --sourceMap false",
     "watch": "tsc -watch -p ./",

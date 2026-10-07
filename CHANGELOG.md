@@ -5,6 +5,60 @@ All notable changes to the "Modular Flutter Localization" extension will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-10-07
+
+One entry point. Generated module files are now parts of the generated library,
+so `import '…/auth_l10n.dart'` no longer compiles — `l10n.dart` / `ml.dart` is
+the only way in.
+
+**If you upgrade, run `Modular L10n: Generate Translations` and fix the module
+imports in your own code.** For each `import '…/<module>_l10n.dart';` line,
+either delete it (if the file already imports `l10n.dart`) or replace it with
+`import '…/l10n.dart';` — the module class names still resolve, because the
+barrel re-exports them. Code that called `XxxL10n.instance` or `.load` also has
+to move to `ML.of(context)` / `ML.current`. Regenerating alone is not enough: it
+fixes the generated side, not your imports.
+
+To migrate without a flag day, pin the old layout in `pubspec.yaml` and move over
+when you can:
+
+```yaml
+modular_l10n:
+  module_access: library   # revert to `part` when the migration is done
+```
+
+### Added
+
+- `moduleAccess` setting (`module_access` in `pubspec.yaml`), enum `part` |
+  `library`, default `part`. `library` reproduces the previous output byte for
+  byte and exists as a migration escape hatch.
+- A `direct-module-import` warning on `import`/`export` of a generated
+  `<module>_l10n.dart`, raised on open and on save. It names the fix instead of
+  leaving you with the analyzer's `can't have a part-of directive`, and offers a
+  quick fix that repoints the import at the entry point. One document is checked
+  per event — no workspace walk.
+
+### Changed
+
+- **Breaking.** `<module>_l10n.dart` files are emitted as `part of` the entry
+  point instead of standalone libraries. The module classes are unchanged: same
+  names, same getters, same `ML.of(context).<module>` API. `l10n.dart` no
+  longer re-exports the module files directly — it re-exports the entry point,
+  which contains them, so the barrel's surface is identical.
+- The generated entry point lists modules with `part` directives; in `library`
+  mode it still lists `import` directives. Nothing else in the output differs.
+
+## [3.1.1] - 2026-08-16
+
+Packaging fix. No functional changes — identical to 3.1.0, which failed to
+upload and was never published.
+
+### Fixed
+
+- Local development files are no longer swept into the published package.
+  `.vscodeignore` now excludes credential files, environment files, and
+  previously built `.vsix` archives by pattern rather than by exact filename.
+
 ## [3.1.0] - 2026-08-16
 
 A correctness release. Every ICU plural, select, and compound message the

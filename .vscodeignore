@@ -68,3 +68,18 @@ temp/**
 *.tmp
 coverage/**
 .nyc_output/**
+
+# Credentials — never package these.
+# vsce refuses to upload a package containing an Azure DevOps PAT, but the
+# check runs server-side, which means the token has already been transmitted
+# by the time it fails. Keep them out of the payload in the first place.
+# Character classes because vsce's glob matching is case-sensitive:
+# a plain `*token*` does not match `pubToken.txt`.
+*[Tt][Oo][Kk][Ee][Nn]*
+*[Ss][Ee][Cc][Rr][Ee][Tt]*
+*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
+*.pat
+*.pem
+*.key
+.env
+.env.*

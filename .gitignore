@@ -100,3 +100,11 @@ accumulated_files.txt
 
 docs/**
 build.sh
+
+# Credentials
+*[Tt][Oo][Kk][Ee][Nn]*
+*[Ss][Ee][Cc][Rr][Ee][Tt]*
+*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
+*.pat
+*.pem
+*.key

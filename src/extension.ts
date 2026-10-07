@@ -2,14 +2,26 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ArbParser } from './arb_parser';
-import { DartGenerator } from './dart_generator';
+import { DartGenerator, toSnakeCaseName } from './dart_generator';
 import { FileWatcher } from './file_watcher';
 import { ModuleScanner, ScanResult } from './module_scanner';
-import { PubspecConfigReader, mergeConfigs, EffectiveConfig } from './pubspec_config';
+import {
+    PubspecConfigReader,
+    mergeConfigs,
+    EffectiveConfig,
+    DEFAULT_CONFIG,
+    ModuleAccess,
+    MODULE_ACCESS_VALUES,
+} from './pubspec_config';
 import { Logger, DEFAULT_LOG_LEVEL, normalizeLogLevel } from './logger';
 import { ExtractToArbProvider, executeExtractToArb } from './extract_action_provider';
 import { MissingTranslationDiagnostics } from './diagnostics_provider';
 import { scanHardcodedStrings, disposeHardcodedDiagnostics } from './hardcoded_string_scanner';
+import {
+    DirectImportCodeActionProvider,
+    checkDocumentForDirectImports,
+    disposeDirectImportDiagnostics,
+} from './direct_import_scanner';
 import { TranslationHoverProvider } from './hover_provider';
 import { TranslationDefinitionProvider } from './definition_provider';
 import { sortArbKeys } from './arb_sort';
@@ -41,6 +53,9 @@ export function getEffectiveConfig(rootPath: string): EffectiveConfig {
         logLevel: normalizeLogLevel(
             vscodeConfig.get<string>('logLevel', DEFAULT_LOG_LEVEL),
             DEFAULT_LOG_LEVEL
+        ),
+        moduleAccess: normalizeModuleAccess(
+            vscodeConfig.get<string>('moduleAccess', DEFAULT_CONFIG.moduleAccess)
         ),
     };
 
@@ -101,6 +116,20 @@ function syncLogLevel(logger: Logger): void {
         return;
     }
     logger.setLevel(getEffectiveConfig(folders[0].uri.fsPath).logLevel);
+}
+
+/**
+ * Coerce a raw setting value to a {@link ModuleAccess}.
+ *
+ * VS Code validates the enum in the settings UI, but a hand-edited
+ * `settings.json` or a stale value from an older release can still deliver
+ * anything; anything unrecognised falls back to the default layout rather than
+ * silently emitting a file shape the project isn't expecting.
+ */
+function normalizeModuleAccess(value: unknown): ModuleAccess {
+    return typeof value === 'string' && (MODULE_ACCESS_VALUES as readonly string[]).includes(value)
+        ? (value as ModuleAccess)
+        : DEFAULT_CONFIG.moduleAccess;
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -257,6 +286,15 @@ export function activate(context: vscode.ExtensionContext) {
         new TranslationDefinitionProvider()
     );
 
+    const directImportCodeActionProvider = vscode.languages.registerCodeActionsProvider(
+        { language: 'dart', scheme: 'file' },
+        new DirectImportCodeActionProvider(),
+        {
+            providedCodeActionKinds:
+                DirectImportCodeActionProvider.providedCodeActionKinds,
+        }
+    );
+
     // ─── Initialize diagnostics provider ──────────────────────────────
     diagnosticsProvider = new MissingTranslationDiagnostics();
 
@@ -269,6 +307,39 @@ export function activate(context: vscode.ExtensionContext) {
             await diagnosticsProvider.runDiagnostics(logger, { auto: true });
         }
     });
+
+    // ─── Flag direct imports of generated module classes ──────────────
+    /**
+     * Re-check a Dart file for `import '…/<module>_l10n.dart'` on open and on
+     * save. The check reads the one document rather than walking the
+     * workspace, so it is cheap enough to run on every edit; open is included
+     * so a violation is already flagged in files restored with the window.
+     */
+    const checkDirectImports = (doc: vscode.TextDocument): void => {
+        if (!doc.fileName.endsWith('.dart')) { return; }
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || isDisabled(folders[0].uri.fsPath)) { return; }
+        try {
+            checkDocumentForDirectImports(
+                doc,
+                folders[0].uri.fsPath,
+                getEffectiveConfig(folders[0].uri.fsPath)
+            );
+        } catch (error) {
+            logger.debug(
+                `Direct-import check failed for ${doc.fileName}: ` +
+                `${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+    };
+
+    const dartOpenWatcher = vscode.workspace.onDidOpenTextDocument(checkDirectImports);
+    const dartSaveWatcher = vscode.workspace.onDidSaveTextDocument(checkDirectImports);
+
+    // Cover documents already open when the extension activates.
+    for (const doc of vscode.workspace.textDocuments) {
+        checkDirectImports(doc);
+    }
 
     context.subscriptions.push(
         outputChannel,
@@ -291,10 +362,17 @@ export function activate(context: vscode.ExtensionContext) {
         importTranslationsCommand,
         generatePseudoLocaleCommand,
         codeActionProvider,
+        directImportCodeActionProvider,
         hoverProvider,
         definitionProvider,
         diagnosticsProvider.getDiagnosticCollection(),
-        arbSaveWatcher
+        // Wrapped: the disposers return void, and subscriptions need
+        // `{ dispose(): any }`.
+        { dispose: disposeDirectImportDiagnostics },
+        { dispose: disposeHardcodedDiagnostics },
+        arbSaveWatcher,
+        dartOpenWatcher,
+        dartSaveWatcher
     );
 
     // Start file watcher if enabled
@@ -1271,6 +1349,7 @@ async function generateTranslations(logger: Logger): Promise<void> {
             supportedLocales: detectedLocales,
             generateCombinedArb: config.generateCombinedArb,
             useDeferredLoading: config.useDeferredLoading,
+            moduleAccess: config.moduleAccess,
             onWarning: (message) => logger.warn(`   ⚠️  ${message}`),
         });
 
@@ -1486,10 +1565,7 @@ function stopFileWatcher(): void {
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
 function toSnakeCase(str: string): string {
-    return str
-        .replace(/([a-z])([A-Z])/g, '$1_$2')
-        .replace(/[-\s]+/g, '_')
-        .toLowerCase();
+    return toSnakeCaseName(str);
 }
 
 function toPascalCase(str: string): string {
@@ -1502,4 +1578,5 @@ function toPascalCase(str: string): string {
 export function deactivate() {
     stopFileWatcher();
     disposeHardcodedDiagnostics();
+    disposeDirectImportDiagnostics();
 }

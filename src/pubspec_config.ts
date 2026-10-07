@@ -19,11 +19,27 @@ import { LogLevel, normalizeLogLevel } from './log_level';
  *   use_deferred_loading: false
  *   watch_mode: true
  *   log_level: warning   # silent | error | warning | verbose
+ *   module_access: part  # part | library
  *
  * Every field is optional. A key that is absent from pubspec.yaml stays
  * `undefined` here so {@link mergeConfigs} can fall back to the VS Code
  * setting for that key alone, rather than replacing the whole config.
  */
+
+/**
+ * How the per-module files relate to the generated entry-point library.
+ *
+ * - `part` — every `<module>_l10n.dart` is a `part of` the `<class>.dart`
+ *   library, so importing one is a compile error and the entry point is the
+ *   only way in. The classes stay public, so their types are still nameable.
+ * - `library` — each module file is its own library and can be imported
+ *   directly. Kept as an escape hatch for projects still migrating.
+ */
+export type ModuleAccess = 'part' | 'library';
+
+/** Accepted spellings of `module_access`; anything else is ignored. */
+export const MODULE_ACCESS_VALUES: readonly ModuleAccess[] = ['part', 'library'];
+
 export interface PubspecConfig {
     enabled: boolean;
     className?: string;
@@ -34,6 +50,7 @@ export interface PubspecConfig {
     useDeferredLoading?: boolean;
     watchMode?: boolean;
     logLevel?: LogLevel;
+    moduleAccess?: ModuleAccess;
 }
 
 /** Values used when neither pubspec.yaml nor VS Code settings supply one. */
@@ -47,6 +64,7 @@ export const DEFAULT_CONFIG: Required<PubspecConfig> = {
     useDeferredLoading: false,
     watchMode: true,
     logLevel: 'warning',
+    moduleAccess: 'part',
 };
 
 /** Only these types are accepted for a given key; anything else is ignored. */
@@ -56,6 +74,19 @@ function asString(value: unknown): string | undefined {
 
 function asBoolean(value: unknown): boolean | undefined {
     return typeof value === 'boolean' ? value : undefined;
+}
+
+/**
+ * Accept only one of a fixed set of strings.
+ *
+ * A typo in `pubspec.yaml` must not silently select a different file layout,
+ * so anything outside `allowed` is dropped — leaving the key `undefined` and
+ * letting {@link mergeConfigs} fall through to the VS Code setting.
+ */
+function asEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+    return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+        ? (value as T)
+        : undefined;
 }
 
 export class PubspecConfigReader {
@@ -111,6 +142,7 @@ export class PubspecConfigReader {
                 watchMode: asBoolean(c.watch_mode),
                 logLevel:
                     c.log_level === undefined ? undefined : normalizeLogLevel(c.log_level),
+                moduleAccess: asEnum(c.module_access, MODULE_ACCESS_VALUES),
             };
         } catch {
             // Malformed YAML: fall back to VS Code settings rather than throwing
@@ -157,6 +189,7 @@ export class PubspecConfigReader {
                 use_deferred_loading: merged.useDeferredLoading,
                 watch_mode: merged.watchMode,
                 log_level: merged.logLevel,
+                module_access: merged.moduleAccess,
             });
 
             fs.writeFileSync(this.pubspecPath, String(doc), 'utf-8');
@@ -231,6 +264,7 @@ export interface EffectiveConfig {
     useDeferredLoading: boolean;
     watchMode: boolean;
     logLevel: LogLevel;
+    moduleAccess: ModuleAccess;
 }
 
 /**
@@ -261,5 +295,6 @@ export function mergeConfigs(
             pubspecConfig.useDeferredLoading ?? vscodeConfig.useDeferredLoading,
         watchMode: pubspecConfig.watchMode ?? vscodeConfig.watchMode,
         logLevel: pubspecConfig.logLevel ?? vscodeConfig.logLevel,
+        moduleAccess: pubspecConfig.moduleAccess ?? vscodeConfig.moduleAccess,
     };
 }
