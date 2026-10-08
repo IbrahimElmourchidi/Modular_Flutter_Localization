@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
+import { normalizeLocale } from './pubspec_config';
 
 export interface ArbFile {
     path: string;
@@ -20,6 +21,12 @@ export interface ScanResult {
     validationErrors?: string[];
     flutterIntlDetected?: boolean;
     skippedFlutterIntlFiles?: string[];
+    /**
+     * Problems that did not stop a file from being used — a `@@locale` that was
+     * rewritten, or two files that collide once normalised. Reported alongside
+     * `validationErrors`, which are fatal.
+     */
+    warnings?: string[];
 }
 
 export interface ValidationError {
@@ -236,6 +243,7 @@ export class ModuleScanner {
         const modules: Map<string, Module> = new Map();
         const detectedLocales: Set<string> = new Set();
         const validationErrors: string[] = [];
+        const warnings: string[] = [];
         const skippedFlutterIntlFiles: string[] = [];
         let flutterIntlDetected = false;
 
@@ -250,6 +258,10 @@ export class ModuleScanner {
             }
 
             const validation = this.validateAndParseArbFile(arbFilePath);
+
+            for (const warning of validation.warnings ?? []) {
+                warnings.push(`${this.getRelativePath(arbFilePath)}: ${warning}`);
+            }
 
             if (!validation.isValid) {
                 validationErrors.push(
@@ -280,14 +292,41 @@ export class ModuleScanner {
             });
         }
 
+        this.reportLocaleCollisions(modules, warnings);
+
         return {
             modules: Array.from(modules.values()),
             detectedLocales: Array.from(detectedLocales).sort(),
             validationErrors: validationErrors.length > 0 ? validationErrors : undefined,
+            warnings: warnings.length > 0 ? warnings : undefined,
             flutterIntlDetected,
             skippedFlutterIntlFiles:
                 skippedFlutterIntlFiles.length > 0 ? skippedFlutterIntlFiles : undefined,
         };
+    }
+
+    /**
+     * Report two files that resolve to the same locale after normalisation.
+     *
+     * `zh-Hans` and `zh_Hans` are the same locale, so one of the two
+     * translations would be read in preference to the other with nothing to
+     * indicate which.
+     */
+    private reportLocaleCollisions(modules: Map<string, Module>, warnings: string[]): void {
+        for (const module of modules.values()) {
+            const seen = new Map<string, string>();
+            for (const file of module.arbFiles) {
+                const previous = seen.get(file.locale);
+                if (previous !== undefined) {
+                    warnings.push(
+                        `${this.getRelativePath(file.path)} and ${previous} both resolve to ` +
+                        `locale "${file.locale}" in module "${module.name}"; only one will be used.`
+                    );
+                } else {
+                    seen.set(file.locale, this.getRelativePath(file.path));
+                }
+            }
+        }
     }
 
     /**
@@ -318,8 +357,15 @@ export class ModuleScanner {
      */
     private validateAndParseArbFile(
         arbFilePath: string
-    ): { isValid: boolean; moduleName?: string; locale?: string; errors: string[] } {
+    ): {
+        isValid: boolean;
+        moduleName?: string;
+        locale?: string;
+        errors: string[];
+        warnings?: string[];
+    } {
         const errors: string[] = [];
+        const warnings: string[] = [];
 
         try {
             const content = fs.readFileSync(arbFilePath, 'utf-8');
@@ -332,8 +378,11 @@ export class ModuleScanner {
                 return { isValid: false, errors };
             }
 
-            const locale = json['@@locale'];
+            const rawLocale = json['@@locale'];
             const moduleName = json['@@context'];
+            // Everything downstream compares locale strings with `===`, so the
+            // canonical form has to be established here rather than at each use.
+            const locale = typeof rawLocale === 'string' ? normalizeLocale(rawLocale) : rawLocale;
 
             if (!locale) {
                 errors.push('Missing required property "@@locale" (required for Modular L10n)');
@@ -342,6 +391,15 @@ export class ModuleScanner {
             } else if (!this.isValidLocale(locale)) {
                 errors.push(
                     `Invalid or unknown locale "${locale}". Valid examples: en, en_US, zh_Hans_CN, ar_EG, sr_Latn_RS`
+                );
+            } else if (locale !== rawLocale) {
+                // `normalizeLocale` also trims, so the difference is not
+                // necessarily hyphens — telling someone who wrote `" en "` that
+                // it "uses hyphens" sent them looking for the wrong thing.
+                warnings.push(
+                    `"@@locale": "${rawLocale}" is not in canonical form; ` +
+                    `treating it as "${locale}". Use "${locale}" so it matches ` +
+                    `the default-locale setting.`
                 );
             }
 
@@ -367,7 +425,13 @@ export class ModuleScanner {
                 return { isValid: false, errors };
             }
 
-            return { isValid: true, moduleName, locale, errors: [] };
+            return {
+                isValid: true,
+                moduleName,
+                locale,
+                errors: [],
+                ...(warnings.length > 0 ? { warnings } : {}),
+            };
         } catch (error) {
             errors.push(
                 `Error reading file: ${error instanceof Error ? error.message : String(error)}`

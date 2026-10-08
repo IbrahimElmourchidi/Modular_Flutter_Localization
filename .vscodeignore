@@ -23,6 +23,7 @@ publish.sh
 **/*.test.ts
 **/*.spec.ts
 test/**
+scripts/**
 
 # Git files
 .git/**

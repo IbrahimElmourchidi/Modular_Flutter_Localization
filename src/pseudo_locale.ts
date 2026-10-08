@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ModuleScanner } from './module_scanner';
 import { getEffectiveConfig } from './extension';
 import { Logger } from './logger';
+import { normalizeLocale } from './pubspec_config';
 
 /**
  * Character map for pseudo-localization.
@@ -43,13 +44,16 @@ export async function generatePseudoLocale(logger: Logger): Promise<void> {
         return;
     }
 
-    // Ask for pseudo-locale code
-    const pseudoLocale = await vscode.window.showInputBox({
+    // Ask for pseudo-locale code. Normalised because the code is written into
+    // `@@locale`, and the scanner compares that value canonically.
+    const pseudoLocaleInput = await vscode.window.showInputBox({
         prompt: 'Enter the pseudo-locale code',
         value: 'en_XA',
         placeHolder: 'e.g., en_XA (Android convention for pseudo-locale)',
     });
-    if (!pseudoLocale) { return; }
+    if (!pseudoLocaleInput) { return; }
+
+    const pseudoLocale = normalizeLocale(pseudoLocaleInput);
 
     // Select expansion level
     const expansion = await vscode.window.showQuickPick(

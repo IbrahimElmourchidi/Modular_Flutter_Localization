@@ -124,6 +124,10 @@ Every ARB file **MUST** include two metadata properties:
 | `@@context` | ✅ Yes | **Module name** – identifies which module owns these translations |
 | `@key` | ❌ Optional | Metadata (description, placeholders, formatting) |
 
+> 💡 `@@locale` may be written with hyphens (`zh-Hans`) or underscores (`zh_Hans`);
+> both are accepted and normalised to the underscore form. Using `zh_Hans`
+> everywhere avoids the mismatch with the `defaultLocale` setting.
+
 > ⚠️ **Without `@@context`**, the extension **skips the file**. This distinguishes modular ARB files from Flutter Intl's `intl_*.arb` files.
 
 ### Supported Locale Formats
@@ -626,6 +630,14 @@ ML.of(context).auth.welcomeMessage('Alice')
 
 ### 2. ICU Plural Messages
 
+> `#` renders the number — `{count, plural, one{# item} other{# items}}` gives
+> `1 item` / `5 items`. `=N` matches an exact value, and `offset:n` shifts the
+> number the categories are chosen from.
+>
+> `#` substitutes the raw value, so `1234` renders as `1234` rather than `1,234`.
+> A `format:` on a placeholder that is also a plural operand is ignored for the
+> same reason. This matches Flutter's own `gen_l10n`.
+
 ```json
 {
   "messageCount": "{count, plural, =0{No messages} =1{1 message} other{{count} messages}}",
@@ -670,6 +682,29 @@ ML.of(context).profile.greeting('female')  // "Hello, ma'am!"
 ML.of(context).profile.greeting('other')   // "Hello!"
 ```
 
+### 3b. Ordinal Messages
+
+`selectordinal` picks a category from CLDR's *ordinal* rules, which is what makes
+`2nd` come out as `2nd`:
+
+```json
+{
+  "position": "You are {n, selectordinal, one{#st} two{#nd} few{#rd} other{#th}} in the queue"
+}
+```
+
+```dart
+ML.of(context).queue.position(1)  // "You are 1st in the queue"
+ML.of(context).queue.position(2)  // "You are 2nd in the queue"
+ML.of(context).queue.position(3)  // "You are 3rd in the queue"
+ML.of(context).queue.position(11) // "You are 11th in the queue"
+```
+
+Only the rule sets your project's locales actually use are generated, into
+`intl/modular_ordinal.dart`. A locale with no ordinal data in CLDR falls back to
+`other`, and the Output panel says so. (`intl` resolves `selectordinal` with
+cardinal rules, which is why the rules are compiled in rather than delegated.)
+
 ### 4. Number Formatting
 
 ```json
@@ -696,6 +731,13 @@ Usage:
 ML.of(context).payments.totalAmount(125.5)
 // Output: "Total: $125.50"
 ```
+
+> A placeholder that is **also** a `plural` or `selectordinal` operand is rendered
+> unformatted, in the module method and in every locale's message alike. The
+> value has to reach `Intl.plural` as a `num`, and `#` substitutes that same raw
+> value, so formatting one of the two would make them disagree. The Output panel
+> says so when it drops a `format:`. Use a separate placeholder if a message needs
+> both a formatted and a raw reading of the same number.
 
 ### 5. Date/Time Formatting
 
@@ -751,6 +793,39 @@ Usage:
 ```dart
 ML.of(context).orders.orderSummary('female', 3)
 // Output: "She ordered 3 items"
+```
+
+### 7. ICU Support Matrix
+
+| Feature | Status | Notes |
+|---|---|---|
+| `{name}` placeholders | ✅ | Type comes from `@key.placeholders` |
+| `plural` with `zero`…`other` | ✅ | Full CLDR category set |
+| `select` with arbitrary keywords | ✅ | `other` required |
+| `selectordinal` | ✅ | CLDR ordinal rules, compiled per project |
+| Exact selectors `=0`, `=5`, … | ✅ | Match the raw value, not the offset |
+| `offset:n` | ✅ | Categories and `#` use `value - offset` |
+| `#` inside a plural body | ✅ | The offset-shifted value |
+| Nested `plural` / `select` / `selectordinal` | ✅ | Arbitrarily deep |
+| ICU quoting (`''`, `'{'`) | ✅ | `It''s` → `It's`; `'{x}'` is literal |
+| `#` outside a plural | ✅ | Literal text, as in gen_l10n |
+| `format:` on a plural operand | ⚠️ | Ignored; the value is raw, like `#` |
+| A key or placeholder that is a Dart keyword | ⚠️ | Reported; the generated Dart would not compile |
+| A literal `{` or `}` | ⚠️ | Allowed, but reported as a diagnostic |
+| `date` / `number` / `time` argument types | ❌ | Rendered as literal text, reported |
+| Plural `offset` with `selectordinal` | ⚠️ | Accepted; CLDR does not define it |
+
+Text around a `plural` or `select` is preserved, and the placeholders in it become
+parameters:
+
+```json
+{
+  "greeting": "{name} has {count, plural, one{1 item} other{{count} items}}"
+}
+```
+
+```dart
+ML.of(context).cart.greeting('Ada', 3)  // "Ada has 3 items"
 ```
 
 ---
@@ -967,15 +1042,33 @@ Text(ML.of(context).auth.loginButton)
 //                       ^ Ctrl+Click → opens auth_en.arb at "loginButton"
 ```
 
-### Missing Translation Diagnostics
+### Translation and ICU Diagnostics
 
-Warnings appear automatically in the **Problems panel** when:
-- A key exists in the default locale but is **missing** in other locales
-- A key exists but has an **empty value** in a locale
+Problems appear automatically in the **Problems panel**. Diagnostics run when you
+save any ARB file; `Modular L10n: Check Missing Translations` runs them on demand.
 
-Diagnostics run automatically when you save any ARB file.
+**Translations**
+- A key exists in the default locale but is **missing** in another locale (error)
+- A key exists but has an **empty value** (warning)
 
-You can also trigger them manually: `Modular L10n: Check Missing Translations`
+**ICU** — the generator repairs what it can so a broken file still produces
+compilable Dart, which means a wrong message could otherwise reach users quietly.
+These put it back in front of you:
+
+| Diagnostic | Meaning |
+|---|---|
+| `icu-syntax` | The message is not well-formed ICU — unbalanced braces, an unknown type, a repeated `=N`, or an apostrophe that quoted a `{name}` into literal text |
+| `icu-dart-keyword` | The key or a placeholder is a Dart reserved word (`default`, `class`, `new`, …), so the generated file would not compile |
+| `icu-argument-mismatch` | This translation needs an argument the template does not declare, or uses one in a role its type cannot serve. The template is used for this locale instead |
+| `icu-missing-other` | A `plural`/`select` block has no `other` case, which is required |
+| `icu-hash-literal` | A `#` outside a plural is literal text — did you mean a plural? (`Order #{id}` is left alone) |
+| `icu-ordinal-exact` | An exact `=0` selector in an ordinal block wins before CLDR rules, which is worth knowing |
+| `icu-control-difference` | This locale adds or drops ICU blocks the template does not have (hint — both render) |
+
+Each is anchored on the offending value's own range, so a key whose name is a
+prefix of another's is still pointed at correctly. One problem is reported once:
+a parse error suppresses the consequence it causes, so an unclosed block does not
+also say "no `other`".
 
 ### Direct Module Import Diagnostics
 
@@ -1176,6 +1269,24 @@ MaterialApp(
 | Parameters typed `Object` instead of `String`/`int` | `@key` metadata lives only in the **default locale** file | Add `placeholders` metadata to the default-locale ARB |
 | Translation shows the wrong value in one parameter | A translation uses a placeholder the default locale doesn't declare | The Output panel names the key and locale; add the placeholder to the default-locale ARB |
 | `LocaleDataException` from a date placeholder | Date symbols not loaded | Register `GlobalMaterialLocalizations.delegate`, or call `initializeDateFormatting()` — see [Date/Time Formatting](#5-datetime-formatting) |
+| Argument count changed after upgrading to 4.2.0 | Text around a `plural`/`select` is now preserved, so its placeholders became parameters | Pass the new arguments — see the [4.2.0 changelog](CHANGELOG.md); the message used to render without that text |
+| `NoSuchMethodError: Closure call with mismatched arguments` | A locale's ICU structure differs from the template's | Align the structure, or leave the locale untranslated; the template is used either way and a diagnostic names the key |
+| A locale shows the template's text and the wrong number suffixes | The locale has no translation of its own — an **empty** `""` value counts as none, which is what `Create Module` writes | Fill the value in; the Output panel names the key |
+| A `format:` on a plural operand is ignored | The value has to reach `Intl.plural` as a `num`, and `#` substitutes it raw | Expected. Use a second placeholder if the message needs both a formatted and a raw reading |
+| Generated Dart will not compile: `Expected a identifier` | A placeholder or message key is a Dart reserved word | `icu-dart-keyword` names it; rename it in the message and in `@key.placeholders` |
+| A French/Italian/Catalan message lost a parameter | `l'{place}` is valid ICU — the apostrophe quotes the `{` and the run ends at the next apostrophe | Write `l''{place}`, or quote the whole placeholder as `l'{place}'` |
+
+### ICU Messages
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `#` renders literally inside a plural | Regenerate — pre-4.2.0 output left it untouched | Run `Modular L10n: Generate Translations` |
+| `2nd` renders as `4th` | Ordinals were resolved with cardinal rules | Regenerate; `selectordinal` now uses CLDR ordinal rules |
+| Text around a plural is missing | Pre-4.2.0 output dropped it | Regenerate, then update the call sites — the message needs its placeholders now |
+| `Undefined name 'd'` from a nested plural | Pre-4.2.0 read the inner block's cases as the outer one's | Regenerate |
+| A locale's translations never load | `@@locale` used hyphens, so it did not match the message table | Regenerate; `@@locale` is normalised on the way in |
+| An exact selector like `=5` is ignored | Pre-4.2.0 only knew `=0`, `=1`, `=2` | Regenerate |
+| `#` renders literally where it should not | It is not inside a `plural`/`selectordinal` block | Use `{count, plural, other{#}}` |
 
 ### In-App Language Switching
 

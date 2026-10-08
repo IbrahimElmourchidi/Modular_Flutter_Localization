@@ -12,6 +12,8 @@ import {
     DEFAULT_CONFIG,
     ModuleAccess,
     MODULE_ACCESS_VALUES,
+    normalizeLocale,
+    resolveEffectiveDefaultLocale,
 } from './pubspec_config';
 import { Logger, DEFAULT_LOG_LEVEL, normalizeLogLevel } from './logger';
 import { ExtractToArbProvider, executeExtractToArb } from './extract_action_provider';
@@ -455,13 +457,15 @@ async function initializeProject(logger: Logger): Promise<void> {
     }
 
     // Ask for default locale
-    const defaultLocale = await vscode.window.showInputBox({
+    const defaultLocaleInput = await vscode.window.showInputBox({
         prompt: 'Default locale',
         placeHolder: 'en',
         value: 'en',
         validateInput: (v) => (!v ? 'Locale is required' : null),
     });
-    if (!defaultLocale) return;
+    if (!defaultLocaleInput) return;
+    // Canonical, so it matches a `@@locale` written with hyphens elsewhere.
+    const defaultLocale = normalizeLocale(defaultLocaleInput);
 
     // Ask for first module name
     const moduleName = await vscode.window.showInputBox({
@@ -599,14 +603,17 @@ async function addLocale(logger: Logger): Promise<void> {
         placeHolder: 'e.g., ar',
         validateInput: (v) => {
             if (!v || v.trim().length === 0) return 'Locale is required';
-            if (detectedLocales.includes(v.trim())) return `Locale "${v}" already exists`;
+            // Compared canonically: the scanner normalises `@@locale`, so a
+            // hyphenated entry here would never match and would duplicate it.
+            if (detectedLocales.includes(normalizeLocale(v)))
+                return `Locale "${v}" already exists`;
             return null;
         },
     });
 
     if (!newLocale) return;
 
-    const locale = newLocale.trim();
+    const locale = normalizeLocale(newLocale);
 
     logger.blank();
     logger.info(`🌍 Adding locale "${locale}" to all modules...`);
@@ -1136,7 +1143,12 @@ async function addL10nFolderToDirectory(
             },
         });
         if (!localesInput) return;
-        localesToCreate = localesInput.split(',').map((l) => l.trim()).filter((l) => l.length > 0);
+        // Canonical, so the `@@locale` written into the file matches what the
+        // scanner will read back.
+        localesToCreate = localesInput
+            .split(',')
+            .map((l) => normalizeLocale(l))
+            .filter((l) => l.length > 0);
     } else {
         const localesInput = await vscode.window.showInputBox({
             prompt: 'Detected locales from existing modules. Modify if needed:',
@@ -1147,7 +1159,12 @@ async function addL10nFolderToDirectory(
             },
         });
         if (!localesInput) return;
-        localesToCreate = localesInput.split(',').map((l) => l.trim()).filter((l) => l.length > 0);
+        // Canonical, so the `@@locale` written into the file matches what the
+        // scanner will read back.
+        localesToCreate = localesInput
+            .split(',')
+            .map((l) => normalizeLocale(l))
+            .filter((l) => l.length > 0);
     }
 
     fs.mkdirSync(l10nPath, { recursive: true });
@@ -1279,7 +1296,18 @@ async function generateTranslations(logger: Logger): Promise<void> {
 
     try {
         const scanner = new ModuleScanner(rootPath, config.arbFilePattern);
-        const { modules, detectedLocales, validationErrors } = await scanner.scanModules();
+        const { modules, detectedLocales, validationErrors, warnings } =
+            await scanner.scanModules();
+
+        if (warnings && warnings.length > 0) {
+            logger.blank('warning');
+            logger.warn('⚠️  Notes:');
+            for (const warning of warnings) {
+                logger.warn(`   ${warning}`);
+            }
+            logger.blank('warning');
+            logger.reveal('warning');
+        }
 
         if (validationErrors && validationErrors.length > 0) {
             logger.blank('warning');
@@ -1323,9 +1351,13 @@ async function generateTranslations(logger: Logger): Promise<void> {
         logger.info(`🌍 Detected locales: ${detectedLocales.join(', ')}`);
 
         const configDefaultLocale = config.defaultLocale;
-        const defaultLocale = detectedLocales.includes(configDefaultLocale)
-            ? configDefaultLocale
-            : detectedLocales[0];
+        // Shared with the diagnostics provider, which had its own copy of this
+        // fallback and therefore skipped every module whose configured default
+        // was absent from the ARB files.
+        const defaultLocale = resolveEffectiveDefaultLocale(
+            configDefaultLocale,
+            detectedLocales
+        ) ?? configDefaultLocale;
 
         const parser = new ArbParser((message) => logger.warn(`   ⚠️  ${message}`));
         const parsedModules = await parser.parseModules(
@@ -1502,7 +1534,12 @@ async function createNewModule(logger: Logger): Promise<void> {
             },
         });
         if (!localesInput) return;
-        localesToCreate = localesInput.split(',').map((l) => l.trim()).filter((l) => l.length > 0);
+        // Canonical, so the `@@locale` written into the file matches what the
+        // scanner will read back.
+        localesToCreate = localesInput
+            .split(',')
+            .map((l) => normalizeLocale(l))
+            .filter((l) => l.length > 0);
     }
 
     const fullModulePath = path.join(rootPath, 'lib', modulePath);

@@ -1,0 +1,201 @@
+{
+  "_comment": [
+    "CLDR ordinal plural rules, compiled from",
+    "  unicode-org/cldr @ main, common/supplemental/ordinals.xml",
+    "  commit 626a9493e151 (2026-08-12)",
+    "",
+    "Locale rules are grouped: the 28 distinct rule sets in CLDR, each with the",
+    "locales that use it. Rules are evaluated in order and the first match wins,",
+    "with `other` as the mandatory fallback.",
+    "",
+    "Operands: `n` is the absolute value, `i` its integer part. CLDR's ordinal",
+    "rules use only these two — never v/w/f/t/e — so an int operand is enough.",
+    "Conditions use `=`/`!=`, `%`, `..` ranges, `,` lists, `and` and `or`.",
+    "",
+    "Do not hand-edit. Regenerate from ordinals.xml instead."
+  ],
+  "version": "cldr-ordinals@626a9493e151",
+  "groups": {
+    "other": {
+      "locales": [
+        "am", "an", "ar", "ast", "bs", "ce", "cs", "cv", "da", "de", "dsb",
+        "el", "et", "eu", "fa", "fi", "fy", "gl", "gsw", "he", "hr", "hsb",
+        "ia", "id", "ie", "in", "is", "iw", "ja", "km", "kn", "ko", "ky",
+        "lt", "lv", "ml", "mn", "my", "nb", "nl", "no", "pa", "pl", "prg",
+        "ps", "pt", "root", "ru", "sd", "sh", "si", "sk", "sl", "sr", "sw",
+        "ta", "te", "tg", "th", "tpi", "tr", "ur", "uz", "yue", "zh", "zu"
+      ],
+      "rules": []
+    },
+    "sv": {
+      "locales": ["sv"],
+      "rules": [{ "category": "one", "condition": "n % 10 = 1,2 and n % 100 != 11,12" }]
+    },
+    "es": {
+      "locales": ["es"],
+      "rules": [{ "category": "one", "condition": "n % 10 = 1,3 and n % 100 != 11" }]
+    },
+    "fr": {
+      "locales": ["bal", "fil", "fr", "ga", "hy", "lo", "mo", "ms", "ro", "tl", "vi"],
+      "rules": [{ "category": "one", "condition": "n = 1" }]
+    },
+    "hu": {
+      "locales": ["hu"],
+      "rules": [{ "category": "one", "condition": "n = 1,5" }]
+    },
+    "ne": {
+      "locales": ["ne"],
+      "rules": [{ "category": "one", "condition": "n = 1..4" }]
+    },
+    "af": {
+      "locales": ["af"],
+      "rules": [{ "category": "few", "condition": "i % 100 = 2..19" }]
+    },
+    "be": {
+      "locales": ["be"],
+      "rules": [{ "category": "few", "condition": "n % 10 = 2,3 and n % 100 != 12,13" }]
+    },
+    "uk": {
+      "locales": ["uk"],
+      "rules": [{ "category": "few", "condition": "n % 10 = 3 and n % 100 != 13" }]
+    },
+    "tk": {
+      "locales": ["tk"],
+      "rules": [{ "category": "few", "condition": "n % 10 = 6,9 or n = 10" }]
+    },
+    "kk": {
+      "locales": ["kk"],
+      "rules": [{ "category": "many", "condition": "n % 10 = 6 or n % 10 = 9 or n % 10 = 0 and n != 0" }]
+    },
+    "it": {
+      "locales": ["it", "lld", "sc", "vec"],
+      "rules": [{ "category": "many", "condition": "n = 11,8,80,800" }]
+    },
+    "lij": {
+      "locales": ["lij", "scn"],
+      "rules": [{ "category": "many", "condition": "n = 11,8,80..89,800..899" }]
+    },
+    "ka": {
+      "locales": ["ka"],
+      "rules": [
+        { "category": "one", "condition": "i = 1" },
+        { "category": "many", "condition": "i = 0 or i % 100 = 2..20,40,60,80" }
+      ]
+    },
+    "sq": {
+      "locales": ["sq"],
+      "rules": [
+        { "category": "one", "condition": "n = 1" },
+        { "category": "many", "condition": "n % 10 = 4 and n % 100 != 14" }
+      ]
+    },
+    "kw": {
+      "locales": ["kw"],
+      "rules": [
+        { "category": "one", "condition": "n = 1..4 or n % 100 = 1..4,21..24,41..44,61..64,81..84" },
+        { "category": "many", "condition": "n = 5 or n % 100 = 5" }
+      ]
+    },
+    "blo": {
+      "locales": ["blo"],
+      "rules": [
+        { "category": "zero", "condition": "i = 0" },
+        { "category": "one", "condition": "i = 1" },
+        { "category": "few", "condition": "i = 2,3,4,5,6" }
+      ]
+    },
+    "bg": {
+      "locales": ["bg"],
+      "rules": [
+        { "category": "one", "condition": "i % 10 = 1 and i % 100 != 11" },
+        { "category": "two", "condition": "i % 10 = 2 and i % 100 != 12" },
+        { "category": "few", "condition": "i % 10 = 3,4 and i % 100 != 13,14" }
+      ]
+    },
+    "en": {
+      "locales": ["en"],
+      "rules": [
+        { "category": "one", "condition": "n % 10 = 1 and n % 100 != 11" },
+        { "category": "two", "condition": "n % 10 = 2 and n % 100 != 12" },
+        { "category": "few", "condition": "n % 10 = 3 and n % 100 != 13" }
+      ]
+    },
+    "kok": {
+      "locales": ["kok", "kok_Latn", "mr"],
+      "rules": [
+        { "category": "one", "condition": "n = 1" },
+        { "category": "two", "condition": "n = 2,3" },
+        { "category": "few", "condition": "n = 4" }
+      ]
+    },
+    "gd": {
+      "locales": ["gd"],
+      "rules": [
+        { "category": "one", "condition": "n = 1,11" },
+        { "category": "two", "condition": "n = 2,12" },
+        { "category": "few", "condition": "n = 3,13" }
+      ]
+    },
+    "ca": {
+      "locales": ["ca"],
+      "rules": [
+        { "category": "one", "condition": "n = 1,3" },
+        { "category": "two", "condition": "n = 2" },
+        { "category": "few", "condition": "n = 4" }
+      ]
+    },
+    "mk": {
+      "locales": ["mk"],
+      "rules": [
+        { "category": "one", "condition": "i % 10 = 1 and i % 100 != 11" },
+        { "category": "two", "condition": "i % 10 = 2 and i % 100 != 12" },
+        { "category": "many", "condition": "i % 10 = 7,8 and i % 100 != 17,18" }
+      ]
+    },
+    "az": {
+      "locales": ["az"],
+      "rules": [
+        { "category": "one", "condition": "i % 10 = 1,2,5,7,8 or i % 100 = 20,50,70,80" },
+        { "category": "few", "condition": "i % 10 = 3,4 or i % 1000 = 100,200,300,400,500,600,700,800,900" },
+        { "category": "many", "condition": "i = 0 or i % 10 = 6 or i % 100 = 40,60,90" }
+      ]
+    },
+    "hi": {
+      "locales": ["gu", "hi"],
+      "rules": [
+        { "category": "one", "condition": "n = 1" },
+        { "category": "two", "condition": "n = 2,3" },
+        { "category": "few", "condition": "n = 4" },
+        { "category": "many", "condition": "n = 6" }
+      ]
+    },
+    "as": {
+      "locales": ["as", "bn"],
+      "rules": [
+        { "category": "one", "condition": "n = 1,5,7,8,9,10" },
+        { "category": "two", "condition": "n = 2,3" },
+        { "category": "few", "condition": "n = 4" },
+        { "category": "many", "condition": "n = 6" }
+      ]
+    },
+    "or": {
+      "locales": ["or"],
+      "rules": [
+        { "category": "one", "condition": "n = 1,5,7..9" },
+        { "category": "two", "condition": "n = 2,3" },
+        { "category": "few", "condition": "n = 4" },
+        { "category": "many", "condition": "n = 6" }
+      ]
+    },
+    "cy": {
+      "locales": ["cy"],
+      "rules": [
+        { "category": "zero", "condition": "n = 0,7,8,9" },
+        { "category": "one", "condition": "n = 1" },
+        { "category": "two", "condition": "n = 2" },
+        { "category": "few", "condition": "n = 3,4" },
+        { "category": "many", "condition": "n = 5,6" }
+      ]
+    }
+  }
+}

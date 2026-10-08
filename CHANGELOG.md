@@ -5,6 +5,168 @@ All notable changes to the "Modular Flutter Localization" extension will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-10-08
+
+ICU correctness, in two parts: the fixes that were making generated code wrong or
+uncompilable, then real ordinal support.
+
+### Breaking
+
+**Some method signatures change.** A message with text around a `plural` used to
+lose that text and the placeholders in it, silently. It now keeps both, which
+means the method takes an extra argument.
+
+```dart
+// app_en.arb:  "{name} has {count, plural, one{1 item} other{{count} items}}"
+l10n.textAroundPlural(5);      // before: rendered "5 items" — "Ada has" was dropped
+l10n.textAroundPlural('Ada', 5); // now
+```
+
+Search your code for messages that place a plural or select in the middle of a
+sentence and update the call sites. Two more, smaller changes:
+
+- A plural argument is now `num` rather than `int`, matching gen_l10n. Source
+  compatible — passing an `int` still works.
+- A placeholder declared `"type": "bool"` is now `bool` rather than `Object`.
+
+### Fixed
+
+Messages that did not compile:
+
+- **A `plural` inside a `plural`.** The inner block's cases were read as the outer
+  one's, producing `Undefined name 'd'`.
+- **A case name inside a word.** `{n, plural, other{Someone{ commented}}}` matched
+  the substring `one{` inside "Someone{" and emitted garbage. Cases are now found
+  by parsing, not by substring search.
+- **A `select` without `other`.** `Intl.select`'s and `Intl.plural`'s `other` is a
+  *required* named parameter, so this was a compile error. `other` is now
+  synthesized from the first case and the problem is reported as a diagnostic.
+
+Messages that compiled but rendered wrong:
+
+- **`#` in a plural body** rendered as a literal `#`. `{count, plural, one{# item}
+  other{# items}}` now renders `1 item` / `5 items`.
+- **`offset:n` was ignored.** It is now applied: exact `=N` selectors match the
+  raw value, categories and `#` use the value minus the offset, per ICU.
+- **`=N` beyond `=0`/`=1`/`=2` was silently dropped.** Any `=N` now works, and is
+  emitted as an equality test rather than folded into `one`/`two` — folding is why
+  Russian 21 read "exactly one".
+- **`''` rendered as two apostrophes.** `It''s` now reads `It's`. ICU quoting is
+  implemented, so `'{name}'` is the literal text `{name}` and no longer an
+  interpolation.
+- **A `select` nested in a `plural`** was emitted as literal ICU text and shown to
+  the user. `#` inside such a nested `select` correctly resolves against the
+  enclosing plural's value.
+- **A locale with a different ICU shape from the template** threw
+  `NoSuchMethodError` on first use. The template translation is used instead and
+  the mismatch is reported.
+- **A hyphenated `@@locale`** such as `zh-Hans` was accepted by the scanner but
+  generated `Locale('zh-Hans')`, which is not a valid `Locale`, so that locale's
+  translations never loaded. `@@locale` is now normalised to `zh_Hans` on the way
+  in, and the default-locale setting is normalised too so the two compare equal.
+  Two files that collide after normalisation are reported.
+
+`gen_l10n` treats a literal `#` outside a plural as ordinary text, and so does
+this extension: `Order #{id}` still renders `Order #7`.
+
+### Added
+
+- **Real ordinal support.** `selectordinal` was resolved with cardinal rules, so
+  English gave `#th` for 2. CLDR's 28 ordinal rule sets are now compiled into a
+  generated `intl/modular_ordinal.dart` — only the sets the project's locales
+  reference — and `selectordinal` selects against them. `1st`, `2nd`, `3rd`,
+  `4th`, `11th` are now correct, as are Welsh, Azerbaijani, Italian and the rest.
+  A locale with no ordinal data falls back to `other` and says so.
+  `intl`'s own `MessageFormat` cannot be used for this: it delegates ordinal
+  selection to the cardinal rules.
+- **ICU diagnostics** in the Problems panel: malformed messages, a missing
+  `other` case, a locale whose structure disagrees with the template, a literal
+  `#` that looks like it was meant to be a plural, and an exact selector in an
+  ordinal block. Anchored on the value's own offset, so a key whose name is a
+  substring of another's is no longer misattributed.
+- **Locale notes** in the output channel for a normalised `@@locale`, colliding
+  files, and a locale with no ordinal rules.
+
+### Changed
+
+- `optionalParameters` accepts bare JSON numbers, emitting `decimalDigits: 2`
+  rather than `decimalDigits: '2'`.
+- `example` accepts a non-string value instead of being ignored.
+- Generated imports are sorted, so output no longer trips `directives_ordering`.
+- **A `format:` on a placeholder that is also a plural operand is now ignored**,
+  and the placeholder renders unformatted everywhere. It used to be applied in the
+  module method but not in the per-locale lookup table, so the two disagreed and
+  the unformatted reading is the one `intl` dispatched to. This matches `#`, which
+  has always substituted the raw operand: `1234` renders as `1234`, not `1,234`,
+  which is also what Flutter's own `gen_l10n` does. A non-operand placeholder is
+  unaffected — `{price}` with `"format": "currency"` is still formatted.
+
+### Fixed
+
+Problems found in a review of the changes above, all verified by running the
+generator or the diagnostics over the fixture corpus:
+
+- **A `selectordinal` nested inside a `select` or `plural` produced Dart that
+  would not compile.** Ordinal detection only looked at top-level nodes, so
+  `intl/modular_ordinal.dart` was never written and nothing imported it, while
+  the message tables still called `modularOrdinalBranch`. Detection is now
+  recursive, and so is the `Intl.plural`/`Intl.select` check that decides the
+  `package:intl` import.
+- **An empty locale value rendered the template text under that locale's
+  ordinal rules** — English `selectordinal` text with English suffixes read as
+  German `1th`, `2th`, `3th`. "Create module" writes `""` for every non-default
+  locale it creates, so this was reachable on a freshly scaffolded project. The
+  value and the locale that owns it are now decided by one predicate, and the
+  combined ARB uses it too.
+- **The editor reported translations as uncompilable that the generator
+  rendered.** The diagnostics provider passed the whole `@key` object where the
+  type resolver reads `@key.placeholders`, so every declared type came back
+  undefined: `es: {count, plural, …}` against a template declaring
+  `"type": "int"` drew an `icu-argument-mismatch` **error** while the generated
+  Spanish was fine. Both paths now build the canonical argument list with one
+  shared function.
+
+Diagnostics noise:
+
+- An empty translation no longer also reports "this locale drops ICU blocks the
+  template has". `empty-translation` already said it, and it renders nothing.
+- `Order #{id}` no longer reports that its `#` "is not inside a plural" — a
+  number sign introducing a placeholder is ordinary text, and the corpus's own
+  fixture was drawing the hint.
+- A locale whose configured default locale is absent from its ARB files is now
+  checked against the locale generation actually uses. Previously the whole
+  module was skipped and produced no diagnostics at all.
+- A parse error and its consequence are reported once, not twice: an unclosed
+  block and a mistyped `Other` no longer each draw both `icu-syntax` and
+  `icu-missing-other`.
+
+New diagnostics:
+
+- **An apostrophe that swallows a placeholder.** `Bienvenue à l'{place}
+  aujourd'hui` is valid ICU, and the `{place}` becomes literal text, so the
+  message silently loses a parameter — common wherever an elision sits against a
+  placeholder. An unclosed quoted run is reported the same way. Both name the two
+  fixes: `''`, or quote the whole placeholder as `'{place}'`.
+- **A placeholder or message key that is a Dart reserved word.** `default`,
+  `class` and `new` are emitted verbatim as parameter and method names, so the
+  generated file does not compile. Diagnosed, not renamed: changing a key changes
+  the generated public API, which is a decision for the project.
+- A repeated `=N` selector, which was silently accepted and emitted two equality
+  tests where the second shadowed the first.
+
+Corrected:
+
+- `'|'` outside a `select` case list is literal text. It was treated as a syntax
+  character everywhere, so `x '|' y` lost both apostrophes. ICU keeps them.
+- The `#` diagnostic now points at the right character. It indexed the decoded
+  text, so every `''` before the `#` moved it one character early.
+- The `=0` hint no longer claims CLDR gives 0 the `other` category in every
+  locale. Welsh does not; 0 is `zero` there.
+- A duplicated key in an ARB file is now indexed at its last occurrence, matching
+  `JSON.parse` — the generator reads the values through `JSON.parse`, so a
+  duplicate could anchor its diagnostic on a different occurrence than the text
+  it was complaining about.
+
 ## [4.0.0] - 2026-10-07
 
 One entry point. Generated module files are now parts of the generated library,

@@ -2,7 +2,52 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ParsedModule, TranslationKey, PlaceholderInfo } from './arb_parser';
 import { ArbParser } from './arb_parser';
+import {
+    parseIcu,
+    IcuArg,
+    IcuNode,
+    IcuPlural,
+    IcuSelect,
+} from './icu_parser';
+import {
+    buildCanonicalArgs,
+    CanonicalArg,
+    checkRoleCompatibility,
+    firstIncompatibleArg,
+    resolvePlaceholderDartType,
+} from './icu_types';
+
+/**
+ * What the renderer needs to know about the call site while walking a message.
+ */
+interface RenderContext {
+    /** Names the generated method actually accepts. Anything else stays literal. */
+    names: Set<string>;
+    /**
+     * Placeholder name -> the local holding its formatted value. A
+     * `DateTime` rendered through `DateFormat` is interpolated as that string,
+     * not as the `DateTime`.
+     */
+    alias: Map<string, string>;
+    /**
+     * Rendered Dart expression standing for the enclosing plural's `#`.
+     * A string rather than an identifier because `offset:n` makes it `n - 1`.
+     * `undefined` outside a plural, where `#` is ordinary text.
+     */
+    hashExpr?: string;
+    /**
+     * The locale of the text being rendered, as a Dart string literal.
+     *
+     * Ordinal rules are locale-specific, and the text's own locale is the one
+     * that has to supply them. `Intl.getCurrentLocale()` is the *runtime* locale,
+     * which is not the same thing whenever a locale falls back to another
+     * locale's text: English text rendered under a `de` device locale was
+     //  selecting its category with German rules, so 1 came back as "1th".
+     */
+    ordinalLocale: string;
+}
 import { ModuleAccess } from './pubspec_config';
+import { compileOrdinals } from './ordinal_codegen';
 
 export interface GeneratorConfig {
     outputPath: string;
@@ -30,6 +75,13 @@ interface MessageEntry {
     key: string;
     /** The translation for this locale (falling back to the default locale). */
     value: string;
+    /**
+     * The locale `value` actually belongs to, which is not always this entry's
+     * locale: a locale with no translation is served the template text, and
+     * anything locale-specific — ordinal rules above all — has to follow the
+     * text rather than the request.
+     */
+    textLocale: string;
     /**
      * Canonical parameter names, derived once from the default locale so every
      * locale's closure declares the same positional signature.
@@ -64,7 +116,20 @@ export function toSnakeCaseName(str: string): string {
 }
 
 export class DartGenerator {
+    /**
+     * Warnings already emitted, so a message rendered for several locales — or
+     * re-rendered as a fallback — is reported once rather than per locale.
+     */
+    private readonly warned = new Set<string>();
+
     constructor(private config: GeneratorConfig) {}
+
+    /** Report a non-fatal problem at most once per generation run. */
+    private warnOnce(id: string, message: string): void {
+        if (this.warned.has(id)) return;
+        this.warned.add(id);
+        this.config.onWarning?.(message);
+    }
 
     async generate(modules: ParsedModule[]): Promise<void> {
         // Ensure output directory exists
@@ -83,6 +148,10 @@ export class DartGenerator {
 
         // Generate messages files for each locale
         await this.generateMessagesFiles(modules);
+
+        // The ordinal resolver is only written when a message needs it, and the
+        // entry point and module files import it conditionally to match.
+        await this.generateOrdinalHelper(modules);
 
         // Generate combined ARB files if enabled
         if (this.config.generateCombinedArb) {
@@ -104,6 +173,11 @@ export class DartGenerator {
         const relativeImports = [
             `import 'app_localization_delegate.dart';`,
             `import 'intl/modular_messages_all.dart';`,
+            // A part file cannot have imports of its own, so in part mode the
+            // entry point supplies this one for every module.
+            ...(this.needsOrdinalHelper(modules)
+                ? [`import 'intl/modular_ordinal.dart';`]
+                : []),
             ...(asParts
                 ? []
                 : modules.map((m) => `import '${this.toSnakeCase(m.name)}_l10n.dart';`)),
@@ -239,9 +313,13 @@ ${this.config.supportedLocales.map((l) => this.generateLocaleConstructor(l)).joi
     /**
      * Generate proper Locale constructor for complex locales.
      * Handles: en, en_US, zh_Hans, zh_Hans_CN
+     *
+     * The scanner normalises `@@locale` before it reaches here, so the parts are
+     * always underscore-separated. The defensive branch below covers a locale
+     * that arrives from configuration before normalisation.
      */
     private generateLocaleConstructor(locale: string): string {
-        const parts = locale.split('_');
+        const parts = locale.replace(/-/g, '_').split('_');
 
         if (parts.length === 1) {
             return `    Locale('${parts[0]}')`;
@@ -257,6 +335,11 @@ ${this.config.supportedLocales.map((l) => this.generateLocaleConstructor(l)).joi
             return `    Locale.fromSubtags(languageCode: '${lang}', scriptCode: '${script}', countryCode: '${region}')`;
         }
 
+        this.warnOnce(
+            `locale-shape:${locale}`,
+            `Locale "${locale}" is not in language[_Script][_REGION] form; ` +
+            `falling back to Locale('${locale}')`
+        );
         return `    Locale('${locale}')`;
     }
 
@@ -268,11 +351,19 @@ ${this.config.supportedLocales.map((l) => this.generateLocaleConstructor(l)).joi
             .join('\n\n');
 
         // A part file cannot have its own imports: it shares the entry point's,
-        // which already brings in `package:intl/intl.dart` for `Intl.message`.
+        // which already brings in `package:intl/intl.dart` for `Intl.message`
+        // and, when needed, the ordinal resolver. A standalone library has to
+        // import both itself.
+        const needsOrdinal = module.keys.some((key) =>
+            this.keyUsesOrdinal(key)
+        );
         const directives =
             this.config.moduleAccess === 'part'
                 ? `part of '${this.toSnakeCase(this.config.className)}.dart';`
-                : `import 'package:intl/intl.dart';`;
+                : [
+                      `import 'package:intl/intl.dart';`,
+                      ...(needsOrdinal ? [`import 'intl/modular_ordinal.dart';`] : []),
+                  ].join('\n');
 
         const content = `// GENERATED CODE - DO NOT MODIFY BY HAND
 // Generated by Modular Flutter L10n Extension
@@ -307,258 +398,360 @@ ${methods}
         fs.writeFileSync(filePath, content, 'utf-8');
     }
 
+    /**
+     * Render one ARB message as a Dart method.
+     *
+     * There is deliberately no branching on message kind here. The parse tree
+     * says what the message contains, and one renderer handles every shape:
+     * plain text, a `plural`, a `select`, or any nesting of them.
+     */
     private generateMethod(key: TranslationKey, moduleName: string): string {
-        const defaultTranslation = key.translations[this.config.defaultLocale] || '';
+        const translation = key.translations[this.config.defaultLocale] || '';
+        const { nodes, errors } = parseIcu(translation);
+        const lookupName = `${moduleName}_${key.key}`;
 
-        // Get ordered placeholders (respects metadata order if specified)
-        const placeholders = ArbParser.getOrderedPlaceholders(defaultTranslation, key.placeholders);
-
-        const hasIcuSyntax = ArbParser.hasIcuSyntax(defaultTranslation);
-        const icuType = ArbParser.getIcuType(defaultTranslation);
-
-        const description = key.description || defaultTranslation;
-        const escapedDescription = this.escapeForDartDoc(description);
-
-        // Validate ICU syntax if present
-        if (hasIcuSyntax) {
-            const validation = ArbParser.validateIcuSyntax(defaultTranslation);
-            if (!validation.valid) {
-                this.config.onWarning?.(
-                    `Invalid ICU syntax in ${moduleName}.${key.key}: ${validation.error}`
-                );
-            }
-        }
-
-        // 0. Handle compound messages (multiple ICU expressions in one string)
-        if (ArbParser.isCompoundMessage(defaultTranslation)) {
-            return this.generateCompoundMethod(
-                key, moduleName, defaultTranslation, escapedDescription, placeholders
+        for (const [i, error] of errors.entries()) {
+            this.warnOnce(
+                `${lookupName}:parse:${error.start}:${i}`,
+                `${moduleName}.${key.key}: ${error.message}`
             );
         }
 
-        // 1. Handle ICU Plural Syntax
-        if (icuType === 'plural' || icuType === 'selectordinal') {
-            return this.generatePluralMethod(key, moduleName, defaultTranslation, escapedDescription, icuType);
-        }
+        // The parameter list is derived once, from the template locale, and
+        // reused by every locale's lookup entry. intl dispatches through
+        // Function.apply, which binds positionally, so a per-locale ordering
+        // would silently swap arguments.
+        const args = ArbParser.getArguments(translation);
+        const orderedParams = this.orderParams(args, key.placeholders);
 
-        // 2. Handle ICU Select Syntax
-        if (icuType === 'select') {
-            return this.generateSelectMethod(key, moduleName, defaultTranslation, escapedDescription);
-        }
+        const description = key.description || translation;
+        const escapedDescription = this.escapeForDartDoc(description);
+        const desc = this.escapeDartString(key.description || '');
 
-        // 3. Handle standard methods with parameters
-        if (placeholders.length > 0) {
-            return this.generateParameterizedMethod(key, moduleName, defaultTranslation, escapedDescription, placeholders);
-        }
-
-        // 4. Handle simple getters
-        return `  /// ${escapedDescription}
+        // Nothing to substitute: keep the getter form. A method with an empty
+        // parameter list would be a gratuitous API change.
+        if (orderedParams.length === 0 && !nodes.some((n) => n.kind === 'plural' || n.kind === 'select')) {
+            return `  /// ${escapedDescription}
   String get ${key.key} {
     return Intl.message(
-      ${this.toDartLiteral(defaultTranslation, new Set())},
-      name: '${moduleName}_${key.key}',
-      desc: '${this.escapeDartString(key.description || '')}',
+      ${this.toDartLiteral(nodes, {
+          names: new Set(),
+          alias: new Map(),
+          ordinalLocale: this.defaultLocaleLiteral(),
+      })},
+      name: '${lookupName}',
+      desc: '${desc}',
       args: [],
     );
   }`;
-    }
-
-    /**
-     * Generate a method for plural/selectordinal ICU messages.
-     */
-    private generatePluralMethod(
-        key: TranslationKey,
-        moduleName: string,
-        defaultTranslation: string,
-        escapedDescription: string,
-        icuType: 'plural' | 'selectordinal'
-    ): string {
-        const icuVarMatch = defaultTranslation.match(/\{(\w+)\s*,\s*(plural|selectordinal)\s*,/);
-        const icuVar = icuVarMatch ? icuVarMatch[1] : 'count';
-
-        const cases = this.extractPluralCases(defaultTranslation);
-
-        return `  /// ${escapedDescription}
-  String ${key.key}(int ${icuVar}) {
-    return Intl.${icuType === 'selectordinal' ? 'plural' : 'plural'}(
-      ${icuVar},
-${this.generatePluralCaseLines(cases)}
-      name: '${moduleName}_${key.key}',
-      desc: '${this.escapeDartString(key.description || '')}',
-      args: [${icuVar}],
-    );
-  }`;
-    }
-
-    /**
-     * Generate a method for select ICU messages.
-     */
-    private generateSelectMethod(
-        key: TranslationKey,
-        moduleName: string,
-        defaultTranslation: string,
-        escapedDescription: string
-    ): string {
-        const icuVarMatch = defaultTranslation.match(/\{(\w+)\s*,\s*select\s*,/);
-        const icuVar = icuVarMatch ? icuVarMatch[1] : 'choice';
-
-        return `  /// ${escapedDescription}
-  String ${key.key}(String ${icuVar}) {
-    return Intl.select(
-      ${icuVar},
-      ${this.extractSelectCases(defaultTranslation)},
-      name: '${moduleName}_${key.key}',
-      desc: '${this.escapeDartString(key.description || '')}',
-      args: [${icuVar}],
-    );
-  }`;
-    }
-
-    /**
-     * Generate a method for compound messages (multiple ICU expressions in one string).
-     * e.g., "{gender, select, male{He} other{They}} bought {count, plural, one{1 item} other{{count} items}}"
-     *
-     * Strategy: collect all ICU variables with their types, generate a method that
-     * takes all of them as params, and build a Dart expression with embedded
-     * Intl.plural/Intl.select calls.
-     */
-    private generateCompoundMethod(
-        key: TranslationKey,
-        moduleName: string,
-        defaultTranslation: string,
-        escapedDescription: string,
-        orderedParams: string[]
-    ): string {
-        const segments = ArbParser.getIcuSegments(defaultTranslation);
-        const icuTypes = new Map(segments.map((s) => [s.variable, s.type]));
-
-        // ICU control variables are typed by their role (int for plural,
-        // String for select); the rest fall back to placeholder metadata.
-        const params = orderedParams
-            .map((name) => {
-                const icuType = icuTypes.get(name);
-                if (icuType === 'plural' || icuType === 'selectordinal') return `int ${name}`;
-                if (icuType === 'select') return `String ${name}`;
-                return `${this.getPlaceholderDartType(key, name)} ${name}`;
-            })
-            .join(', ');
-
-        const dartExpression = this.buildCompoundDartExpression(
-            defaultTranslation,
-            segments,
-            new Set(orderedParams)
-        );
-
-        return `  /// ${escapedDescription}
-  String ${key.key}(${params}) {
-    return Intl.message(
-      ${dartExpression},
-      name: '${moduleName}_${key.key}',
-      desc: '${this.escapeDartString(key.description || '')}',
-      args: [${orderedParams.join(', ')}],
-    );
-  }`;
-    }
-
-    /**
-     * Convert a compound ICU string into a Dart string literal with embedded
-     * `Intl.plural` / `Intl.select` calls.
-     *
-     * Input:  `{gender, select, male{He} other{They}} bought {count, plural, one{1 item} other{{count} items}}`
-     * Output: `'${Intl.select(gender, {'male': 'He', 'other': 'They'})} bought ${Intl.plural(count, one: '1 item', other: '$count items')}'`
-     *
-     * Assembled from alternating literal runs and generated expressions, so the
-     * expressions are never fed through the escaper. Building the whole string
-     * first and escaping it afterwards turns every `${…}` into inert text.
-     */
-    private buildCompoundDartExpression(
-        text: string,
-        segments: ReturnType<typeof ArbParser.getIcuSegments>,
-        interpolate: Set<string>
-    ): string {
-        const sorted = [...segments].sort((a, b) => a.start - b.start);
-        let body = '';
-        let cursor = 0;
-
-        for (const seg of sorted) {
-            body += this.toDartLiteralBody(text.substring(cursor, seg.start), interpolate);
-
-            if (seg.type === 'plural' || seg.type === 'selectordinal') {
-                const caseArgs = this.buildInlinePluralArgs(this.extractPluralCases(seg.raw));
-                body += `\${Intl.plural(${seg.variable}, ${caseArgs})}`;
-            } else {
-                body += `\${Intl.select(${seg.variable}, ${this.buildInlineSelectCases(seg.raw)})}`;
-            }
-
-            cursor = seg.end;
         }
 
-        body += this.toDartLiteralBody(text.substring(cursor), interpolate);
-        return `'${body}'`;
-    }
-
-    /**
-     * Single-line `zero: 'none', one: '1 item', other: '$count items'` for an
-     * Intl.plural call embedded in a larger expression.
-     */
-    private buildInlinePluralArgs(cases: Map<string, string>): string {
-        return Array.from(this.resolvePluralCases(cases).entries())
-            .map(([name, content]) => `${name}: ${this.toDartLiteral(content)}`)
-            .join(', ');
-    }
-
-    /**
-     * Generate a method with parameters.
-     * Supports number/DateTime formatting from placeholder metadata.
-     */
-    private generateParameterizedMethod(
-        key: TranslationKey,
-        moduleName: string,
-        defaultTranslation: string,
-        escapedDescription: string,
-        placeholders: string[]
-    ): string {
-        const params = placeholders
-            .map((p) => `${this.getPlaceholderDartType(key, p)} ${p}`)
-            .join(', ');
-
         // Placeholders carrying NumberFormat / DateFormat metadata are formatted
-        // into a local first; the message then interpolates the formatted local.
-        const formattingLines = this.generateFormattingLines(key, placeholders);
-        const formattedFor = new Map(
-            formattingLines.map((f) => [f.placeholder, f.formattedVar])
-        );
-
-        // The string handed to Intl.message is the runtime fallback — used
-        // whenever the lookup misses (unsupported locale, or a call before
-        // initializeModularMessages resolves). It has to be real Dart
-        // interpolation, not the raw ARB text, or the user sees "Hello {name}".
-        const messageSource = placeholders.reduce(
-            (text, p) =>
-                formattedFor.has(p)
-                    ? text.split(`{${p}}`).join(`{${formattedFor.get(p)}}`)
-                    : text,
-            defaultTranslation
-        );
-        const interpolate = new Set(placeholders.map((p) => formattedFor.get(p) ?? p));
-        const message = this.toDartLiteral(messageSource, interpolate);
-
-        const args = placeholders.map((p) => formattedFor.get(p) ?? p);
-
+        // into a local first; the message then interpolates the formatted value.
+        // Resolved here rather than by rewriting the ARB text, which used to
+        // also rewrite `{p}` occurrences inside quoted ICU literals.
+        const formattingLines = this.generateFormattingLines(key, orderedParams, args);
+        const alias = new Map(formattingLines.map((f) => [f.placeholder, f.formattedVar]));
+        // The parameter keeps the ARB name — callers pass `{when: …}` — while
+        // the formatted local is a distinct identifier the body reads. Aliasing
+        // the parameter itself would make the declaration and the format call
+        // name the same variable.
+        const params = orderedParams
+            .map((p) => `${this.getPlaceholderDartType(key, p, args)} ${p}`)
+            .join(', ');
         const formattedVars =
             formattingLines.length > 0
                 ? formattingLines.map((f) => f.varDeclaration).join('\n    ') + '\n    '
                 : '';
 
+        const names = new Set(orderedParams);
+        // The string handed to Intl.message is the runtime fallback — used
+        // whenever the lookup misses (unsupported locale, or a call before
+        // initializeModularMessages resolves). It has to be real Dart
+        // interpolation, not the raw ARB text, or the user sees "Hello {name}".
+        const message = this.toDartLiteral(nodes, {
+            names,
+            alias,
+            // The module method holds the template text, so the template locale
+            // supplies the ordinal rules when it is what gets rendered.
+            ordinalLocale: this.defaultLocaleLiteral(),
+        });
+
+        // `args:` is not decoration: intl forwards it to the per-locale lookup
+        // function, so it decides what the closure is actually called with. An
+        // operand position therefore has to arrive raw — the closure passes it
+        // to `Intl.plural`, which takes a `num` — while a plain placeholder
+        // still arrives formatted, which is what that closure interpolates.
+        const lookupArgs = orderedParams.map((p) =>
+            this.isOperand(args, p) ? p : alias.get(p) ?? p
+        );
+
         return `  /// ${escapedDescription}
   String ${key.key}(${params}) {
     ${formattedVars}return Intl.message(
       ${message},
-      name: '${moduleName}_${key.key}',
-      desc: '${this.escapeDartString(key.description || '')}',
-      args: [${args.join(', ')}],
+      name: '${lookupName}',
+      desc: '${desc}',
+      args: [${lookupArgs.join(', ')}],
     );
   }`;
+    }
+
+    /** Whether `name` is used as a plural or ordinal operand anywhere in the message. */
+    private isOperand(args: IcuArg[], name: string): boolean {
+        const role = args.find((a) => a.name === name)?.role;
+        return role === 'pluralOperand' || role === 'ordinalOperand';
+    }
+
+    /**
+     * Order the message's arguments, letting `@key.placeholders` declare the
+     * intent. A metadata entry naming a placeholder the message does not use is
+     * dropped, and a placeholder the message uses but metadata omits is kept —
+     * otherwise the signature would either gain a parameter nothing supplies or
+     * lose one the message interpolates.
+     *
+     * Delegates to {@link ArbParser.getOrderedPlaceholders}, which is the same
+     * rule the per-locale lookup entries use to derive their parameter list.
+     * Two copies of this drifted: they agreed on every fixture in the corpus and
+     * would have disagreed on any message where a locale reorders placeholders,
+     * which is precisely the case positional dispatch depends on.
+     */
+    private orderParams(
+        args: IcuArg[],
+        metadata?: Record<string, PlaceholderInfo>
+    ): string[] {
+        // `getOrderedPlaceholders` takes text because its other caller has text.
+        // Here the names are all the ordering rule needs, and a brace-joined
+        // reconstruction satisfies the parser's arg collection exactly — no
+        // literal text survives it.
+        const text = args.map((a) => `{${a.name}}`).join(' ');
+        return ArbParser.getOrderedPlaceholders(text, metadata);
+    }
+
+    /**
+     * Render a parsed message as a single-quoted Dart string literal.
+     *
+     * Literal runs are escaped individually and the substitutions are emitted
+     * raw, because escaping a string that already contains `$name` would turn
+     * the interpolation into the literal characters `\$name`.
+     */
+    private toDartLiteral(nodes: IcuNode[], ctx: RenderContext): string {
+        return `'${this.renderNodes(nodes, ctx)}'`;
+    }
+
+    /**
+     * Render a parsed message into the *body* of a Dart string literal.
+     *
+     * Everything that is not literal text becomes an interpolation:
+     *   {name}                      -> $name
+     *   {count, plural, …}          -> ${Intl.plural(count, …)}
+     *   {gender, select, …}         -> ${Intl.select(gender, {…})}
+     *   # inside a plural body      -> ${<the plural's operand>}
+     */
+    private renderNodes(nodes: IcuNode[], ctx: RenderContext): string {
+        let out = '';
+
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+
+            switch (node.kind) {
+                case 'text':
+                    out += this.escapeDartString(node.value);
+                    break;
+
+                case 'arg': {
+                    // Only names the caller actually supplies become
+                    // interpolations; anything else stays literal text, so a
+                    // rogue placeholder in one locale cannot reference an
+                    // undeclared variable.
+                    if (!ctx.names.has(node.name)) {
+                        out += `{${node.name}}`;
+                        break;
+                    }
+                    const target = ctx.alias.get(node.name) ?? node.name;
+                    out += this.interpolate(target, this.followingChar(nodes, i));
+                    break;
+                }
+
+                case 'hash':
+                    // `#` stands for the enclosing plural's value. With an
+                    // offset that is an expression, not a name, which is why
+                    // the context carries a rendered string rather than an
+                    // identifier.
+                    out += ctx.hashExpr === undefined ? '#' : `\${${ctx.hashExpr}}`;
+                    break;
+
+                case 'select':
+                    out += `\${${this.renderSelect(node, ctx)}}`;
+                    break;
+
+                case 'plural':
+                    out += `\${${this.renderPlural(node, ctx)}}`;
+                    break;
+
+                case 'invalid':
+                    // Malformed input: keep the original text rather than
+                    // dropping it, and never invent an interpolation from it.
+                    out += this.escapeDartString(node.raw);
+                    break;
+            }
+        }
+
+        return out;
+    }
+
+    /**
+     * The character that will follow an interpolation, if any.
+     *
+     * `{n}items` must become `${n}items`: without the braces, `$nitems` is one
+     * (undefined) identifier rather than the value of `n` followed by text.
+     */
+    private followingChar(nodes: IcuNode[], index: number): string {
+        const next = nodes[index + 1];
+        return next?.kind === 'text' ? next.value.charAt(0) : '';
+    }
+
+    /**
+     * `$name` when the next character cannot extend the identifier, `${name}`
+     * when it can.
+     */
+    private interpolate(name: string, following: string): string {
+        return /[A-Za-z0-9_]/.test(following) ? `\${${name}}` : `$${name}`;
+    }
+
+    /** The identifier a placeholder is read as, honouring a formatting alias. */
+    private resolvedName(ctx: RenderContext, name: string): string {
+        return ctx.alias.get(name) ?? name;
+    }
+
+    private renderSelect(node: IcuSelect, ctx: RenderContext): string {
+        const cases = new Map(node.cases);
+        this.synthesizeOther(cases, node.name, ctx);
+
+        const entries = [...cases.entries()].map(([key, body]) => {
+            const rendered = this.renderNodes(body, ctx);
+            return `'${this.escapeDartString(key)}': '${rendered}'`;
+        });
+
+        return `Intl.select(${this.resolvedName(ctx, node.name)}, {${entries.join(', ')}})`;
+    }
+
+    private renderPlural(node: IcuPlural, ctx: RenderContext): string {
+        // The raw parameter name, never the formatting alias. `count` carrying
+        // `@count: {format: compact}` also produces a `countString` local, and
+        // using that as the operand emitted `Intl.plural(countString, …)` — a
+        // `String` where `num` is required, which does not compile. The
+        // formatted local stays for plain `{count}` interpolations, where it
+        // is the value the caller asked to see.
+        const operand = node.name;
+        const shifted = node.offset ? `${operand} - ${node.offset}` : operand;
+
+        // Inside this plural's bodies, `#` is the offset-shifted value, and a
+        // nested `select` keeps that binding — which is what ICU does.
+        const inner: RenderContext = { ...ctx, hashExpr: shifted };
+
+
+        // Exact selectors (`=N`) are equality tests on the *raw* value, so they
+        // cannot go through Intl.plural's category parameters. Folding `=1`
+        // into `one:` instead would be wrong wherever the locale's `one`
+        // category covers more than 1 — Russian 21 would read "exactly one".
+        // An ordinal has to consult the CLDR data compiled into
+        // intl/modular_ordinal.dart — intl's own `selectordinal` handling uses
+        // cardinal rules, which turns "2nd" into "4th". `Intl.plural` cannot be
+        // used because it selects the case itself from the named parameters;
+        // here the category is already a string, so the branch is chosen here.
+        const branches = this.ordinalOrPluralBranches(node, inner, node.ordinal);
+        let expr = node.ordinal
+            ? `modularOrdinalBranch(modularOrdinalCategory(${ctx.ordinalLocale}, ${shifted}), {${branches}})`
+            : `Intl.plural(${shifted}, ${branches})`;
+
+        for (const selector of node.exactSelectors) {
+            const body = node.cases.get(selector);
+            if (body === undefined) continue;
+            const rendered = this.renderNodes(body, inner);
+            expr = `${operand} == ${selector.slice(1)} ? '${rendered}' : ${expr}`;
+        }
+
+        return expr;
+    }
+
+    /**
+     * A Dart string literal for the locale of the text being rendered.
+     *
+     * Baked in rather than read from `Intl.getCurrentLocale()`. The two agree
+     * only when the device locale is the locale whose text is on screen; when a
+     * locale has no translation and intl serves another locale's message table,
+     * the runtime locale is the one that was *asked for* and the ordinal rules
+     * it supplies are for text nobody is reading. The result was the English
+     * "1st" coming back as "1th" under a German device locale.
+     *
+     * The literal is the locale's canonical underscore form, which is also the
+     * key the generated rule map is built from.
+     */
+    private ordinalLocaleLiteral(locale: string): string {
+        return `'${this.escapeDartString(locale.replace(/-/g, '_'))}'`;
+    }
+
+    /** The same, for the template-locale text in a module method. */
+    private defaultLocaleLiteral(): string {
+        return this.ordinalLocaleLiteral(this.config.defaultLocale);
+    }
+
+    /**
+     * The case list for a plural or ordinal block.
+     *
+     * `Intl.plural` reads it as named parameters; the ordinal path reads the
+     * same map by the category string the CLDR resolver returned. Declared
+     * order, so the emitted call reads like the source.
+     */
+    private ordinalOrPluralBranches(
+        node: IcuPlural,
+        ctx: RenderContext,
+        asMapKeys: boolean
+    ): string {
+        const categories = new Map<string, IcuNode[]>();
+        for (const [key, body] of node.cases) {
+            if (!key.startsWith('=')) categories.set(key, body);
+        }
+        this.synthesizeOther(categories, node.name, ctx);
+
+        return ['zero', 'one', 'two', 'few', 'many', 'other']
+            .filter((key) => categories.has(key))
+            .map((key) => {
+                // Intl.plural takes named parameters; the ordinal path takes a
+                // map, which needs its keys quoted.
+                const name = asMapKeys ? `'${key}'` : key;
+                return `${name}: '${this.renderNodes(categories.get(key)!, ctx)}'`;
+            })
+            .join(', ');
+    }
+
+    /**
+     * Guarantee an `other` branch.
+     *
+     * `other` is a *required* named parameter of `Intl.plural` and
+     * `Intl.select`, so a message without one does not compile. Copying the
+     * first available branch keeps the generated code buildable even when the
+     * diagnostic is ignored.
+     */
+    private synthesizeOther(
+        cases: Map<string, IcuNode[]>,
+        name: string,
+        ctx: RenderContext
+    ): void {
+        if (cases.has('other')) return;
+
+        const first = [...cases.keys()][0];
+        const fallback = cases.values().next();
+        this.warnOnce(
+            `synthesize-other:${name}:${first ?? ''}`,
+            `Missing "other" case for "${name}"; falling back to ${
+                first === undefined ? 'an empty message' : `"${first}"`
+            }`
+        );
+
+        cases.set('other', fallback.done ? [] : fallback.value);
+        void ctx;
     }
 
     /**
@@ -567,7 +760,8 @@ ${this.generatePluralCaseLines(cases)}
      */
     private generateFormattingLines(
         key: TranslationKey,
-        placeholders: string[]
+        placeholders: string[],
+        args: IcuArg[]
     ): { placeholder: string; varDeclaration: string; formattedVar: string }[] {
         const lines: { placeholder: string; varDeclaration: string; formattedVar: string }[] = [];
 
@@ -577,6 +771,33 @@ ${this.generatePluralCaseLines(cases)}
             const meta = key.placeholders[pName];
             if (!meta || !meta.format) continue;
 
+            // An operand gets no formatted local at all.
+            //
+            // It used to get one, and that produced two different renderings of
+            // the same message: the module method interpolated `$countString`,
+            // while the per-locale lookup closure — which receives only the
+            // canonical parameters and has no formatting of its own —
+            // interpolated the raw `$count`. `intl` dispatches through the
+            // lookup table, so the unformatted reading was the one users saw,
+            // and the warning below described behaviour that never happened.
+            //
+            // Skipping it also makes this consistent with `#`, which stands for
+            // the raw operand and so has never been number-formatted: `1234`
+            // renders as `1234`, not `1,234`. That matches Flutter's own
+            // `gen_l10n`, so the deviation is deliberate and documented rather
+            // than a gap.
+            if (this.isOperand(args, pName)) {
+                this.warnOnce(
+                    `operand-format:${key.key}:${pName}`,
+                    `${key.key}: "{${pName}}" is a plural operand, so its ` +
+                    `"${meta.format}" format is ignored — the value is passed to ` +
+                    `\`Intl.plural\` raw, and \`#\` substitutes it unformatted.`
+                );
+                continue;
+            }
+
+            // `String` suffix, not a rename: the ARB name stays the parameter
+            // name so the public signature does not change.
             const formattedVar = `${pName}String`;
 
             if (meta.type === 'DateTime') {
@@ -623,216 +844,40 @@ ${this.generatePluralCaseLines(cases)}
         return lines;
     }
 
-    /**
-     * Extract plural cases from an ICU message.
-     * Properly handles nested braces.
-     */
-    private extractPluralCases(icuString: string): Map<string, string> {
-        const cases = new Map<string, string>();
-        const caseNames = ['=0', '=1', '=2', 'zero', 'one', 'two', 'few', 'many', 'other'];
-
-        for (const caseName of caseNames) {
-            const content = this.extractCaseContent(icuString, caseName);
-            if (content !== null) {
-                cases.set(caseName, content);
-            }
-        }
-
-        return cases;
-    }
-
-    /**
-     * Extract the content of a specific case from an ICU message.
-     * Properly handles nested braces.
-     */
-    private extractCaseContent(icuString: string, caseName: string): string | null {
-        // Match the case with possible whitespace before the opening brace
-        const searchPatterns = [
-            `${caseName}{`,
-            `${caseName} {`,
-        ];
-
-        let startIndex = -1;
-        let searchLen = 0;
-
-        for (const pattern of searchPatterns) {
-            const idx = icuString.indexOf(pattern);
-            if (idx !== -1 && (startIndex === -1 || idx < startIndex)) {
-                startIndex = idx;
-                searchLen = pattern.length;
-            }
-        }
-
-        if (startIndex === -1) {
-            return null;
-        }
-
-        const contentStart = startIndex + searchLen;
-        let bracketCount = 1;
-        let contentEnd = contentStart;
-
-        for (let i = contentStart; i < icuString.length; i++) {
-            if (icuString[i] === '{') {
-                bracketCount++;
-            } else if (icuString[i] === '}') {
-                bracketCount--;
-                if (bracketCount === 0) {
-                    contentEnd = i;
-                    break;
-                }
-            }
-        }
-
-        // Raw ICU text. Escaping and placeholder conversion happen at emit time
-        // via toDartLiteralBody, so the two transforms can't fight each other.
-        return icuString.substring(contentStart, contentEnd);
-    }
-
-    /**
-     * Resolve ICU plural cases onto Dart's `Intl.plural` named parameters.
-     *
-     * `=0`/`=1`/`=2` map to `zero`/`one`/`two`, which `Intl.pluralLogic` checks
-     * by exact value before consulting CLDR rules — so the explicit ICU
-     * semantics survive. A named case wins over the explicit form when both
-     * are present.
-     */
-    private resolvePluralCases(cases: Map<string, string>): Map<string, string> {
-        const explicitToDartParam: Record<string, string> = {
-            '=0': 'zero',
-            '=1': 'one',
-            '=2': 'two',
-        };
-        const namedCases = ['zero', 'one', 'two', 'few', 'many', 'other'];
-        const resolved = new Map<string, string>();
-
-        for (const [caseName, content] of cases.entries()) {
-            if (caseName.startsWith('=')) {
-                const dartParam = explicitToDartParam[caseName];
-                if (dartParam && content.trim() && !resolved.has(dartParam)) {
-                    resolved.set(dartParam, content);
-                }
-            }
-        }
-
-        for (const caseName of namedCases) {
-            const content = cases.get(caseName);
-            if (content !== undefined && content.trim()) {
-                resolved.set(caseName, content);
-            }
-        }
-
-        // Re-key in Intl.plural declaration order.
-        const ordered = new Map<string, string>();
-        for (const caseName of namedCases) {
-            if (resolved.has(caseName)) {
-                ordered.set(caseName, resolved.get(caseName)!);
-            }
-        }
-        return ordered;
-    }
-
-    /** Multi-line `zero: '…',` argument list for a standalone Intl.plural call. */
-    private generatePluralCaseLines(cases: Map<string, string>): string {
-        return Array.from(this.resolvePluralCases(cases).entries())
-            .map(([name, content]) => `      ${name}: ${this.toDartLiteral(content)},`)
-            .join('\n');
-    }
-
-    /**
-     * Parse `{var, select, a{…} b{…}}` into its case map, preserving the raw
-     * (unescaped) ICU content. Handles nested braces in case bodies.
-     */
-    private parseSelectCases(icuString: string): Map<string, string> {
-        const cases = new Map<string, string>();
-
-        // Find the start of the select body (after "{var, select,")
-        const selectStart = icuString.match(/\{\w+\s*,\s*select\s*,/);
-        if (!selectStart) {
-            return cases;
-        }
-
-        const bodyStart = (selectStart.index ?? 0) + selectStart[0].length;
-        let pos = bodyStart;
-
-        // Parse each case: caseName{content}
-        while (pos < icuString.length) {
-            // Skip whitespace
-            while (pos < icuString.length && /\s/.test(icuString[pos])) {
-                pos++;
-            }
-
-            // Check if we hit the closing brace of the select
-            if (icuString[pos] === '}') {
-                break;
-            }
-
-            // Read case name
-            const caseNameMatch = icuString.substring(pos).match(/^(\w+)\s*\{/);
-            if (!caseNameMatch) {
-                break;
-            }
-
-            const caseName = caseNameMatch[1];
-            pos += caseNameMatch[0].length;
-
-            // Read content with balanced braces
-            let braceDepth = 1;
-            let contentStart = pos;
-
-            while (pos < icuString.length && braceDepth > 0) {
-                if (icuString[pos] === '{') braceDepth++;
-                else if (icuString[pos] === '}') braceDepth--;
-                if (braceDepth > 0) pos++;
-            }
-
-            cases.set(caseName, icuString.substring(contentStart, pos));
-            pos++; // skip closing brace
-        }
-
-        return cases;
-    }
-
-    /** Multi-line Dart map literal for a standalone Intl.select call. */
-    private extractSelectCases(icuString: string): string {
-        const entries = Array.from(this.parseSelectCases(icuString).entries()).map(
-            ([name, content]) => `'${name}': ${this.toDartLiteral(content)}`
+/**
+ * Get the Dart type for a placeholder.
+ *
+ * The role decides the type and `@key.placeholders` may only narrow it — see
+ * {@link resolvePlaceholderDartType}. Pure: the warning about a declared type
+ * the role had to overrule is raised once per key from
+ * {@link canonicalArgs}, so deriving a signature does not report it again.
+ */
+    private getPlaceholderDartType(
+        key: TranslationKey,
+        placeholderName: string,
+        args?: IcuArg[]
+    ): string {
+        return resolvePlaceholderDartType(
+            key.placeholders,
+            placeholderName,
+            args ?? []
         );
-        if (entries.length === 0) {
-            return '{}';
-        }
-        return `{\n        ${entries.join(',\n        ')},\n      }`;
-    }
-
-    /** Single-line Dart map literal for an embedded Intl.select call. */
-    private buildInlineSelectCases(icuString: string): string {
-        const entries = Array.from(this.parseSelectCases(icuString).entries()).map(
-            ([name, content]) => `'${name}': ${this.toDartLiteral(content)}`
-        );
-        return `{${entries.join(', ')}}`;
     }
 
     /**
-     * Get the Dart type for a placeholder, including proper DateTime support.
+     * Record that `@placeholder`'s declared type cannot be used for the role it
+     * turned out to play, and the type used instead.
      */
-    private getPlaceholderDartType(key: TranslationKey, placeholderName: string): string {
-        if (key.placeholders && key.placeholders[placeholderName]) {
-            const type = key.placeholders[placeholderName].type;
-            switch (type) {
-                case 'int':
-                    return 'int';
-                case 'num':
-                    return 'num';
-                case 'double':
-                    return 'double';
-                case 'DateTime':
-                    return 'DateTime';
-                case 'String':
-                    return 'String';
-                default:
-                    return 'Object';
-            }
-        }
-        return 'Object';
+    private warnPlaceholderTypeOverride(
+        placeholderName: string,
+        declared: string,
+        used: string
+    ): void {
+        this.warnOnce(
+            `placeholder-type:${placeholderName}:${declared}:${used}`,
+            `"@${placeholderName}" is declared as "${declared}" but is used as a ` +
+            `plural operand, so it is typed "${used}"`
+        );
     }
 
     private async generateDelegate(modules: ParsedModule[]): Promise<void> {
@@ -883,6 +928,30 @@ class AppLocalizationDelegate extends LocalizationsDelegate<${this.config.classN
         fs.writeFileSync(filePath, content, 'utf-8');
     }
 
+    /**
+     * Whether a locale carries text of its own for a key.
+     *
+     * The empty string does not count. `extension.ts` writes `""` as the
+     * placeholder for every non-default locale it creates, so an ARB file the
+     * extension itself produced is full of keys that are present-but-empty —
+     * and a key with text of its own is the only thing that makes the value
+     * *and* the locale that owns it agree. Judging the value with `||` and
+     * `textLocale` with `!== undefined` sent the empty locale's ordinal rules
+     * over the template's text, which is where "1st" came back as "1th" in
+     * German. One predicate, so the two can never disagree again.
+     */
+    private hasOwnTranslation(key: TranslationKey, locale: string): boolean {
+        const value = key.translations[locale];
+        return typeof value === 'string' && value !== '';
+    }
+
+    /** The text a locale renders for a key, falling back to the template. */
+    private translationText(key: TranslationKey, locale: string): string {
+        return this.hasOwnTranslation(key, locale)
+            ? (key.translations[locale] as string)
+            : key.translations[this.config.defaultLocale] ?? '';
+    }
+
     private async generateMessagesFiles(modules: ParsedModule[]): Promise<void> {
         const messagesDir = path.join(this.config.outputPath, 'intl');
         fs.mkdirSync(messagesDir, { recursive: true });
@@ -891,10 +960,7 @@ class AppLocalizationDelegate extends LocalizationsDelegate<${this.config.classN
             const messages: MessageEntry[] = [];
             for (const module of modules) {
                 for (const key of module.keys) {
-                    const translation =
-                        key.translations[locale] ||
-                        key.translations[this.config.defaultLocale] ||
-                        '';
+                    const translation = this.translationText(key, locale);
 
                     // The parameter list is derived once, from the default
                     // locale, and reused for every locale. intl dispatches
@@ -908,6 +974,9 @@ class AppLocalizationDelegate extends LocalizationsDelegate<${this.config.classN
                     messages.push({
                         key: `${module.name}_${key.key}`,
                         value: translation,
+                        textLocale: this.hasOwnTranslation(key, locale)
+                            ? locale
+                            : this.config.defaultLocale,
                         params,
                         locale,
                         translationKey: key,
@@ -936,55 +1005,41 @@ class AppLocalizationDelegate extends LocalizationsDelegate<${this.config.classN
      * simply selects a branch and returns.
      */
     private generateMessagesFileContent(locale: string, messages: MessageEntry[]): string {
-        let usesIntl = false;
+        // Imports are decided from the text actually rendered, which is not
+        // always `entry.value`: an entry whose arguments cannot satisfy the
+        // canonical signature renders the template instead. Deciding from
+        // `entry.value` therefore both imported `modular_ordinal.dart` for a
+        // locale whose rendered text uses no ordinals, and missed the `intl`
+        // import for one whose rendered text does.
+        const rendered = messages.map((entry) => ({
+            entry,
+            ...this.renderedLookupEntry(entry),
+        }));
 
-        const messageEntries = messages
-            .map((entry) => {
-                const { key, value, params } = entry;
-                const icuType = ArbParser.getIcuType(value);
-
-                // 0. Compound messages (multiple top-level ICU expressions)
-                if (ArbParser.isCompoundMessage(value)) {
-                    usesIntl = true;
-                    return this.generateMessageCompoundEntry(entry);
-                }
-
-                // 1. ICU plural / selectordinal
-                if (icuType === 'plural' || icuType === 'selectordinal') {
-                    usesIntl = true;
-                    const icuVarMatch = value.match(/\{(\w+)\s*,\s*(plural|selectordinal)\s*,/);
-                    const icuVar = icuVarMatch ? icuVarMatch[1] : 'count';
-                    return this.generateMessagePluralEntry(key, icuVar, this.extractPluralCases(value));
-                }
-
-                // 2. ICU select
-                if (icuType === 'select') {
-                    usesIntl = true;
-                    const icuVarMatch = value.match(/\{(\w+)\s*,\s*select\s*,/);
-                    const icuVar = icuVarMatch ? icuVarMatch[1] : 'choice';
-                    return this.generateMessageSelectEntry(key, icuVar, value);
-                }
-
-                // 3. Parameterized messages
-                if (params.length > 0) {
-                    this.warnAboutUnknownPlaceholders(entry);
-                    const body = this.toDartLiteral(value, new Set(params));
-                    return `    '${key}': (${params.join(', ')}) => ${body},`;
-                }
-
-                // 4. Simple static messages
-                return `    '${key}': MessageLookupByLibrary.simpleMessage(${this.toDartLiteral(value, new Set())}),`;
-            })
+        const messageEntries = rendered
+            .map((r) => this.renderLookupEntry(r.entry, r.text, r.locale))
             .join('\n');
 
-        // Only import intl when an entry actually calls into it, so projects
-        // without ICU messages don't get an unused_import warning.
-        const intlImport = usesIntl ? "import 'package:intl/intl.dart';\n" : '';
+        // Only import what the entries actually call, so a project without ICU
+        // messages gets no unused_import warning. directives_ordering wants the
+        // package: block before relative imports, so the relative one goes last.
+        const usesIntl = rendered.some((r) => this.needsIntl(r.text));
+        const usesOrdinal = rendered.some((r) => this.textUsesOrdinal(r.text));
+
+        const imports = [
+            'package:intl/intl.dart',
+            'package:intl/message_lookup_by_library.dart',
+        ].filter((uri) => uri !== 'package:intl/intl.dart' || usesIntl);
+        const relativeImports = usesOrdinal ? ['modular_ordinal.dart'] : [];
+
+        const importBlock = [...imports, ...relativeImports]
+            .map((uri) => `import '${uri}';`)
+            .join('\n');
 
         return `// GENERATED CODE - DO NOT MODIFY BY HAND
 // Generated by Modular Flutter L10n Extension
 ${GENERATED_IGNORES}
-${intlImport}import 'package:intl/message_lookup_by_library.dart';
+${importBlock}
 
 final messages = ModularMessageLookup();
 
@@ -1001,70 +1056,219 @@ ${messageEntries}
     }
 
     /**
-     * Warn when a translation uses a placeholder the default locale doesn't
-     * declare. Such a placeholder can't become a parameter — the caller passes
-     * arguments in the default locale's shape — so it is left as literal text
-     * and the translator is told rather than shipping `{foo}` to users.
+     * Whether a node list contains a block of the given kind, at any depth.
+     *
+     * Recursive because the construct can be nested: `{g, select, male{He
+     * finished {n, selectordinal, …}}}` puts the ordinal inside a select, where
+     * a top-level `some` does not see it. Judging only the top level left those
+     * call sites emitting `modularOrdinalBranch(modularOrdinalCategory(…))`
+     * into a file that was never written and never imported — a compile error.
      */
-    private warnAboutUnknownPlaceholders(entry: MessageEntry): void {
-        if (entry.locale === this.config.defaultLocale) return;
-
-        const declared = new Set(entry.params);
-        for (const name of ArbParser.extractPlaceholders(entry.value)) {
-            if (!declared.has(name)) {
-                this.config.onWarning?.(
-                    `[${entry.locale}] ${entry.key}: placeholder "{${name}}" is not in the ` +
-                    `${this.config.defaultLocale} translation and will render literally. ` +
-                    `Available: ${entry.params.map((p) => `{${p}}`).join(', ') || '(none)'}`
-                );
+    private static containsNode(nodes: readonly IcuNode[], predicate: (n: IcuNode) => boolean): boolean {
+        for (const node of nodes) {
+            if (predicate(node)) return true;
+            if (node.kind === 'select' || node.kind === 'plural') {
+                for (const body of node.cases.values()) {
+                    if (DartGenerator.containsNode(body, predicate)) return true;
+                }
             }
         }
+        return false;
     }
 
     /**
-     * Compound message entry: a closure with embedded Intl.plural/Intl.select
-     * calls, taking the key's canonical parameter list.
+     * Whether a message's rendering calls into `package:intl`.
+     *
+     * Every `plural` and `select` renders as an `Intl.plural` / `Intl.select`
+     * call at whatever depth it sits, so the presence of one anywhere in the
+     * message is what decides.
      */
-    private generateMessageCompoundEntry(entry: MessageEntry): string {
-        this.warnAboutUnknownPlaceholders(entry);
-
-        const segments = ArbParser.getIcuSegments(entry.value);
-        const expression = this.buildCompoundDartExpression(
-            entry.value,
-            segments,
-            new Set(entry.params)
+    private needsIntl(text: string): boolean {
+        return DartGenerator.containsNode(
+            parseIcu(text).nodes,
+            (n) => n.kind === 'plural' || n.kind === 'select'
         );
-
-        return `    '${entry.key}': (${entry.params.join(', ')}) => ${expression},`;
     }
 
-    /** Plural entry. No `name:`/`args:` — see generateMessagesFileContent. */
-    private generateMessagePluralEntry(
-        key: string,
-        icuVar: string,
-        cases: Map<string, string>
+    /** Whether a message's text contains a `selectordinal` block. */
+    private textUsesOrdinal(text: string): boolean {
+        return DartGenerator.containsNode(
+            parseIcu(text).nodes,
+            (n) => n.kind === 'plural' && n.ordinal
+        );
+    }
+
+    /** Whether a key's template translation is ordinal. */
+    private keyUsesOrdinal(key: TranslationKey): boolean {
+        return this.textUsesOrdinal(key.translations[this.config.defaultLocale] ?? '');
+    }
+
+    /**
+     * Whether any module needs the generated ordinal resolver.
+     *
+     * Every locale's translation counts, not just the template's. A locale may
+     * legitimately add a `selectordinal` the template does not have — its
+     * arguments still match, so it renders — and judging from the template alone
+     * left those generated call sites importing `modular_ordinal.dart` from a
+     * file that was never written.
+     *
+     * Deliberately an over-approximation: a locale whose text falls back to the
+     * template can make this true unnecessarily, which only costs an unused
+     * helper. Missing one is a compile error, so the safe direction to err is
+     * here.
+     */
+    private needsOrdinalHelper(modules: ParsedModule[]): boolean {
+        return modules.some((module) =>
+            module.keys.some((key) =>
+                Object.values(key.translations).some((text) => this.textUsesOrdinal(text))
+            )
+        );
+    }
+
+    /**
+     * One locale's resolution of a message.
+     *
+     * The closure always takes the *canonical* parameter list — derived from the
+     * template locale — because intl dispatches through `Function.apply`, which
+     * binds positionally. A closure shaped by the translation's own arguments
+     * throws `NoSuchMethodError` the moment the two disagree, which is what a
+     * plural added in only one locale used to do.
+     *
+     * These entries must not pass `name:` / `args:` to `Intl.plural` /
+     * `Intl.select`: supplying `name` makes intl look the message up, the lookup
+     * resolves back to this closure, and the recursion ends in
+     * StackOverflowError on the first call.
+     */
+    private renderLookupEntry(
+        entry: MessageEntry,
+        renderedText: string,
+        renderedLocale: string
     ): string {
-        return `    '${key}': (${icuVar}) => Intl.plural(${icuVar}, ${this.buildInlinePluralArgs(cases)}),`;
+        const canonical = entry.params;
+
+        // Fall back to the template translation only when this locale's message
+        // cannot be satisfied by the canonical arguments — an argument the
+        // template does not declare, or one used in a role its type cannot
+        // serve. Either would fail to compile.
+        const fallback = this.lookupFallbackReason(entry);
+        if (fallback) {
+            this.warnOnce(
+                `lookup-fallback:${entry.locale}:${entry.key}`,
+                `[${entry.locale}] ${entry.key}: ${fallback}; using the ` +
+                `${this.config.defaultLocale} translation instead`
+            );
+            return this.renderStaticLookupEntry(entry, renderedText);
+        }
+
+        const { nodes } = parseIcu(renderedText);
+        const ctx: RenderContext = {
+            names: new Set(canonical),
+            // No formatting in a lookup entry: the formatted value is what the
+            // caller passes, having been produced in the module method.
+            alias: new Map(),
+            ordinalLocale: this.ordinalLocaleLiteral(renderedLocale),
+        };
+        const body = this.renderNodes(nodes, ctx);
+
+        if (canonical.length === 0 && !this.needsIntl(renderedText)) {
+            return `    '${entry.key}': MessageLookupByLibrary.simpleMessage('${body}'),`;
+        }
+        return `    '${entry.key}': (${canonical.join(', ')}) => '${body}',`;
     }
 
-    /** Select entry. No `name:`/`args:` — see generateMessagesFileContent. */
-    private generateMessageSelectEntry(
-        key: string,
-        icuVar: string,
-        value: string
-    ): string {
-        return `    '${key}': (${icuVar}) => Intl.select(${icuVar}, ${this.buildInlineSelectCases(value)}),`;
+    /**
+ * The text a lookup entry will render, and the locale that text belongs to.
+ *
+ * The two have to travel together. `value` is already the template text when a
+ * locale has no translation of its own, so a locale read off the file being
+ * written names rules for text that is not there — an English message selecting
+ * its ordinals with German rules, which is where "1st" became "1th".
+ */
+private renderedLookupEntry(entry: MessageEntry): { text: string; locale: string } {
+    // A translation that cannot be satisfied by the canonical arguments renders
+    // the template instead, so the template locale's rules apply to it.
+    if (this.lookupFallbackReason(entry)) {
+        return {
+            text: entry.translationKey.translations[this.config.defaultLocale] ?? '',
+            locale: this.config.defaultLocale,
+        };
     }
+    return { text: entry.value, locale: entry.textLocale };
+}
+
+    private renderStaticLookupEntry(entry: MessageEntry, text: string): string {
+        const { nodes } = parseIcu(text);
+        // This entry renders the template text, whichever locale asked for it.
+        const ctx: RenderContext = {
+            names: new Set(entry.params),
+            alias: new Map(),
+            ordinalLocale: this.defaultLocaleLiteral(),
+        };
+        return `    '${entry.key}': (${entry.params.join(', ')}) => '${this.renderNodes(nodes, ctx)}',`;
+    }
+
+    /**
+ * The template locale's arguments, each paired with the Dart type the module
+ * method gives it.
+ *
+ * Computed from the template and its `@key` metadata, which is exactly what
+ * `generateMethod` builds the signature from — so this is the type a locale's
+ * closure will actually be called with.
+ */
+    private canonicalArgs(key: TranslationKey): CanonicalArg[] {
+        const template = key.translations[this.config.defaultLocale] ?? '';
+        const args = ArbParser.getArguments(template);
+        const canonical = buildCanonicalArgs(args, key.placeholders);
+
+        // One warning per declaration the role overruled, not one per message
+        // that happens to use it. Keyed on the ARB name, which is what the
+        // author has to edit.
+        for (const arg of canonical) {
+            const declared = key.placeholders?.[arg.name]?.type;
+            if (!declared || declared === arg.dartType) continue;
+            const role = args.find((a) => a.name === arg.name)?.role;
+            if (role && !checkRoleCompatibility(declared, role).ok) {
+                this.warnPlaceholderTypeOverride(arg.name, declared, arg.dartType);
+            }
+        }
+        return canonical;
+    }
+
+/**
+ * Decide whether this locale's translation can be rendered with the canonical
+ * arguments, returning the reason when it cannot.
+ *
+ * The only reasons are the two that make the generated Dart fail to compile: an
+ * argument the template does not declare, and an argument used in a role its
+ * canonical type cannot serve. See {@link firstIncompatibleArg}.
+ *
+ * Earlier this also compared a description of the two messages' ICU shape, and
+ * that description included literal text and plain `{name}` positions. It
+ * therefore disagreed over a translated comma, a moved word, or any sentence
+ * split differently — and every one of those translations was silently replaced
+ * by the English text, in every language, for the ordinary act of translating.
+ */
+private lookupFallbackReason(entry: MessageEntry): string | null {
+    const incompatible = firstIncompatibleArg(
+        this.canonicalArgs(entry.translationKey),
+        ArbParser.getArguments(entry.value)
+    );
+    return incompatible ? incompatible.reason : null;
+}
 
     private async generateMessagesAll(modules: ParsedModule[]): Promise<void> {
         // FIXED: Namespaced imports and function to avoid Flutter Intl conflict
+        // Sorted so the emitted file satisfies directives_ordering, which the
+        // Flutter projects we generate into usually enable.
         const localeImports = this.config.supportedLocales
             .map((l) => `import 'modular_messages_${l}.dart' as modular_messages_${l.replace(/-/g, '_')};`)
+            .sort()
             .join('\n');
 
         const deferredImports = this.config.useDeferredLoading
             ? this.config.supportedLocales
                 .map((l) => `import 'modular_messages_${l}.dart' deferred as modular_messages_${l.replace(/-/g, '_')};`)
+                .sort()
                 .join('\n')
             : '';
 
@@ -1152,10 +1356,7 @@ Future<bool> initializeModularMessages(String localeName) async {
             for (const module of modules) {
                 for (const key of module.keys) {
                     const fullKey = `${module.name}_${key.key}`;
-                    combinedArb[fullKey] =
-                        key.translations[locale] ||
-                        key.translations[this.config.defaultLocale] ||
-                        '';
+                    combinedArb[fullKey] = this.translationText(key, locale);
 
                     if (key.description || key.placeholders) {
                         combinedArb[`@${fullKey}`] = {
@@ -1190,6 +1391,56 @@ ${exports.join('\n')}
 
         const filePath = path.join(this.config.outputPath, 'l10n.dart');
         fs.writeFileSync(filePath, content, 'utf-8');
+    }
+
+    /**
+     * Write `intl/modular_ordinal.dart` when any message uses `selectordinal`.
+     *
+     * intl resolves `selectordinal` with cardinal rules, so the ordinal category
+     * has to come from the CLDR data compiled into this file. Only the rule sets
+     * the project's locales reference are emitted.
+     */
+    private async generateOrdinalHelper(modules: ParsedModule[]): Promise<void> {
+        const locales = this.localesWithOrdinals(modules);
+        if (locales.length === 0) return;
+
+        const { content, unmapped } = compileOrdinals(locales);
+        for (const locale of unmapped) {
+            this.warnOnce(
+                `ordinal-unmapped:${locale}`,
+                `No CLDR ordinal rules for "${locale}"; ordinal messages will fall back to "other"`
+            );
+        }
+
+        const filePath = path.join(this.config.outputPath, 'intl', 'modular_ordinal.dart');
+        this.writeIfChanged(filePath, content);
+    }
+
+    /**
+     * Locales that need an ordinal rule set, from `selectordinal` usage.
+     *
+     * Every locale is judged on its own translation. Restricting this to the
+     * locales whose *template* carries the construct was sound only while a
+     * locale that added one fell back to the template; now it renders, so a
+     * locale-only `selectordinal` needs a rule set and the generated file that
+     * `modularOrdinalCategory` lives in.
+     *
+     * An over-approximation is safe in the other direction too: a locale whose
+     * text falls back to an ordinal template is listed even though its own text
+     * has no ordinal, and an unused entry in the rule map costs nothing.
+     */
+    private localesWithOrdinals(modules: ParsedModule[]): string[] {
+        const locales = new Set<string>();
+
+        for (const module of modules) {
+            for (const key of module.keys) {
+                for (const locale of this.config.supportedLocales) {
+                    if (this.textUsesOrdinal(key.translations[locale] ?? '')) locales.add(locale);
+                }
+            }
+        }
+
+        return [...locales].sort();
     }
 
     /**
@@ -1301,11 +1552,6 @@ ${exports.join('\n')}
 
         flushLiteral(text.length);
         return out;
-    }
-
-    /** {@link toDartLiteralBody} wrapped in the surrounding quotes. */
-    private toDartLiteral(text: string, interpolate?: Set<string>): string {
-        return `'${this.toDartLiteralBody(text, interpolate)}'`;
     }
 
     /**

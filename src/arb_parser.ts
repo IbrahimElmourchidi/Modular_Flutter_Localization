@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { Module, ArbFile } from './module_scanner';
+import { parseIcu, collectArgs, describeIcuControls, IcuArg, IcuNode } from './icu_parser';
 
 export interface TranslationKey {
     key: string;
@@ -10,10 +11,27 @@ export interface TranslationKey {
 
 export interface PlaceholderInfo {
     type?: string;
+    /** `String(...)` on read: ARB metadata sometimes carries a bare number. */
     example?: string;
     format?: string;
     isCustomDateFormat?: string;
-    optionalParameters?: Record<string, string>;
+    optionalParameters?: Record<string, string | number>;
+}
+
+/**
+ * ARB allows any JSON scalar in `optionalParameters`, and Dart's `NumberFormat`
+ * named arguments are typed — `decimalDigits` is an `int`, not a `String`.
+ * Keeping numbers as numbers here is what lets the generator emit
+ * `decimalDigits: 2` rather than `decimalDigits: '2'`.
+ */
+function normalizeOptionalParameters(value: unknown): Record<string, string | number> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+    const result: Record<string, string | number> = {};
+    for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof entry === 'number' || typeof entry === 'string') result[name] = entry;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export interface ParsedModule {
@@ -128,204 +146,61 @@ export class ArbParser {
         for (const [name, info] of Object.entries(placeholders)) {
             const placeholderInfo = info as Record<string, unknown>;
             result[name] = {
-                type: placeholderInfo.type as string | undefined,
-                example: placeholderInfo.example as string | undefined,
-                format: placeholderInfo.format as string | undefined,
-                isCustomDateFormat: placeholderInfo.isCustomDateFormat as string | undefined,
-                optionalParameters: placeholderInfo.optionalParameters as Record<string, string> | undefined,
+                type:
+                    typeof placeholderInfo.type === 'string'
+                        ? placeholderInfo.type
+                        : undefined,
+                // ARB examples are usually strings, but `"example": 42` is valid
+                // JSON and shows up in hand-written files. Stringifying keeps
+                // the declared type `string | undefined` instead of leaking
+                // `unknown` into every consumer.
+                example:
+                    placeholderInfo.example === undefined || placeholderInfo.example === null
+                        ? undefined
+                        : String(placeholderInfo.example),
+                format:
+                    typeof placeholderInfo.format === 'string'
+                        ? placeholderInfo.format
+                        : undefined,
+                isCustomDateFormat:
+                    typeof placeholderInfo.isCustomDateFormat === 'string'
+                        ? placeholderInfo.isCustomDateFormat
+                        : undefined,
+                optionalParameters: normalizeOptionalParameters(
+                    placeholderInfo.optionalParameters
+                ),
             };
         }
         return result;
     }
 
-    /** Matches the head of an ICU block: `{var, plural|select|selectordinal,` */
-    private static readonly ICU_HEAD = /^\{(\w+)\s*,\s*(plural|select|selectordinal)\s*,/;
+    // ─── ICU ────────────────────────────────────────────────────────────
+    //
+    // Everything below reads the tree from `icu_parser` rather than scanning
+    // the message string. Regexes and `indexOf` could not see block structure,
+    // which is what let a `select` nested in a plural through as literal text
+    // and let `indexOf('one{')` match inside the word "Someone{".
+
+    /** The parse tree for a message, plus any non-fatal parse errors. */
+    static parse(text: string): { nodes: IcuNode[]; errors: { message: string; start: number; end: number }[] } {
+        return parseIcu(text);
+    }
+
+    /** Arguments the message needs, in first-appearance order, with their ICU role. */
+    static getArguments(text: string): IcuArg[] {
+        return collectArgs(parseIcu(text).nodes);
+    }
 
     /**
-     * Extract the placeholder names a message takes as parameters, in order of
-     * first appearance.
+     * Argument names in first-appearance order, including those reached through
+     * nested case bodies.
      *
-     * Only *top-level* text is scanned. The interior of an ICU block is skipped
-     * entirely, because a case body is content, not a parameter list:
-     * `{gender, select, male{He} other{They}}` takes one parameter, `gender` —
-     * `He` and `They` are translations, and treating them as placeholders puts
-     * bogus arguments into the generated method signature.
-     *
-     * e.g. "Hello {name}"                                     -> ["name"]
-     * e.g. "{count, plural, =0{none} other{{count} items}}"    -> ["count"]
-     * e.g. "{g, select, male{He} other{They}} has {n} items"   -> ["g", "n"]
+     * A `select` inside a plural contributes its keyword here, which the old
+     * top-level-only scan missed — the generated method then referenced an
+     * identifier that was never a parameter.
      */
     static extractPlaceholders(text: string): string[] {
-        const placeholders: string[] = [];
-        const seen = new Set<string>();
-
-        const add = (name: string) => {
-            if (!seen.has(name)) {
-                seen.add(name);
-                placeholders.push(name);
-            }
-        };
-
-        let i = 0;
-        while (i < text.length) {
-            if (text[i] !== '{') {
-                i++;
-                continue;
-            }
-
-            const rest = text.substring(i);
-
-            // An ICU block contributes its control variable, then is skipped whole.
-            const icuHead = rest.match(this.ICU_HEAD);
-            if (icuHead) {
-                add(icuHead[1]);
-                i = this.skipIcuBlock(text, i);
-                continue;
-            }
-
-            // A plain {name} placeholder.
-            const simple = rest.match(/^\{(\w+)\}/);
-            if (simple) {
-                add(simple[1]);
-                i += simple[0].length;
-                continue;
-            }
-
-            i++;
-        }
-
-        return placeholders;
-    }
-
-    /**
-     * Skip past an entire ICU block starting at position, returning the index after the closing brace.
-     */
-    private static skipIcuBlock(text: string, startPos: number): number {
-        let braceDepth = 0;
-        for (let i = startPos; i < text.length; i++) {
-            if (text[i] === '{') {
-                braceDepth++;
-            } else if (text[i] === '}') {
-                braceDepth--;
-                if (braceDepth === 0) {
-                    return i + 1;
-                }
-            }
-        }
-        return text.length;
-    }
-
-    /**
-     * Check if a translation has ICU message syntax (plural, select, selectordinal)
-     */
-    static hasIcuSyntax(text: string): boolean {
-        return /\{\w+\s*,\s*(plural|select|selectordinal)\s*,/.test(text);
-    }
-
-    /**
-     * Determine the type of ICU message (plural, select, selectordinal).
-     * Returns the type of the FIRST ICU expression found.
-     */
-    static getIcuType(text: string): 'plural' | 'select' | 'selectordinal' | null {
-        const match = text.match(/\{\w+\s*,\s*(plural|select|selectordinal)\s*,/);
-        return match ? (match[1] as 'plural' | 'select' | 'selectordinal') : null;
-    }
-
-    /**
-     * Extract the **top-level** ICU segments from a message string.
-     * Each segment represents one `{var, plural|select|selectordinal, ...}` block.
-     *
-     * Blocks nested inside another block are not returned: they belong to their
-     * parent's case content and are rendered as part of it. Returning them would
-     * produce overlapping ranges, and would make a message with a single nested
-     * block look like a compound message to {@link isCompoundMessage}.
-     */
-    static getIcuSegments(text: string): {
-        variable: string;
-        type: 'plural' | 'select' | 'selectordinal';
-        start: number;
-        end: number;
-        raw: string;
-    }[] {
-        const segments: {
-            variable: string;
-            type: 'plural' | 'select' | 'selectordinal';
-            start: number;
-            end: number;
-            raw: string;
-        }[] = [];
-
-        let i = 0;
-        while (i < text.length) {
-            if (text[i] !== '{') {
-                i++;
-                continue;
-            }
-
-            const match = text.substring(i).match(this.ICU_HEAD);
-            if (!match) {
-                i++;
-                continue;
-            }
-
-            const start = i;
-            const end = this.skipIcuBlock(text, start);
-            segments.push({
-                variable: match[1],
-                type: match[2] as 'plural' | 'select' | 'selectordinal',
-                start,
-                end,
-                raw: text.substring(start, end),
-            });
-
-            // Resume *after* the block so nested heads are not reported.
-            i = end;
-        }
-
-        return segments;
-    }
-
-    /**
-     * Check if a message contains multiple ICU expressions (compound message).
-     * e.g., "{gender, select, male{He} other{They}} has {count, plural, one{1 item} other{{count} items}}"
-     */
-    static isCompoundMessage(text: string): boolean {
-        return this.getIcuSegments(text).length > 1;
-    }
-
-    /**
-     * Validate ICU message syntax.
-     * Returns true if the ICU message is well-formed.
-     */
-    static validateIcuSyntax(text: string): { valid: boolean; error?: string } {
-        if (!this.hasIcuSyntax(text)) {
-            return { valid: true };
-        }
-
-        // Check for balanced braces
-        let braceCount = 0;
-        for (const char of text) {
-            if (char === '{') braceCount++;
-            else if (char === '}') braceCount--;
-
-            if (braceCount < 0) {
-                return { valid: false, error: 'Unmatched closing brace' };
-            }
-        }
-
-        if (braceCount !== 0) {
-            return { valid: false, error: 'Unmatched opening brace' };
-        }
-
-        // Check for required ICU parts based on type
-        const icuType = this.getIcuType(text);
-        if (icuType === 'plural' || icuType === 'selectordinal') {
-            if (!text.includes('other{')) {
-                return { valid: false, error: `ICU ${icuType} message missing required 'other' case` };
-            }
-        }
-
-        return { valid: true };
+        return collectArgs(parseIcu(text).nodes).map((a) => a.name);
     }
 
     /**
@@ -356,5 +231,30 @@ export class ArbParser {
 
         // Metadata order first, then anything the text uses that metadata omitted.
         return [...declared, ...used.filter((name) => !declaredSet.has(name))];
+    }
+
+    /**
+     * A stable description of a message's ICU control structure — its
+     * `select` / `plural` / `selectordinal` blocks and the arguments they select
+     * on. Literal text and plain `{name}` positions are excluded.
+     */
+    static describeControls(text: string): string {
+        return describeIcuControls(parseIcu(text).nodes);
+    }
+
+    /**
+     * Check whether a message is well-formed ICU.
+     *
+     * The parser is lenient by design — it always returns a usable tree — so
+     * this is what surfaces problems to the user. `Intl.plural` and
+     * `Intl.select` both take `other` as a *required* named parameter, so a
+     * missing case is a compile error in the generated Dart, not a runtime one.
+     */
+    static validateIcuSyntax(text: string): { valid: boolean; error?: string } {
+        const { errors } = parseIcu(text);
+        if (errors.length === 0) {
+            return { valid: true };
+        }
+        return { valid: false, error: errors.map((e) => e.message).join('; ') };
     }
 }

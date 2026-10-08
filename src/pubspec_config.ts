@@ -53,6 +53,38 @@ export interface PubspecConfig {
     moduleAccess?: ModuleAccess;
 }
 
+/**
+ * Canonical form of a locale name: `zh-Hans` -> `zh_Hans`.
+ *
+ * The scanner accepts either separator, and everything downstream compares
+ * locale strings with `===`. Without one canonical form, `zh-Hans` in an ARB
+ * file and `zh_Hans` in the default-locale setting compare unequal, and the
+ * project silently falls back to the first detected locale.
+ */
+export function normalizeLocale(locale: string): string {
+    return locale.trim().replace(/-/g, '_');
+}
+
+/**
+ * The locale that actually serves as the template: the configured default when
+ * the project's ARB files contain it, otherwise the first one detected.
+ *
+ * Shared because two callers need this and disagreed. The generator fell back to
+ * `detectedLocales[0]`, while the diagnostics looked for an ARB file named after
+ * `config.defaultLocale` and skipped the whole module when there was none — so a
+ * project whose configured default was absent got generated output from one
+ * locale and no ICU diagnostics at all, for any module.
+ *
+ * @returns the effective default, or `undefined` when nothing was detected
+ */
+export function resolveEffectiveDefaultLocale(
+    configuredDefault: string,
+    detectedLocales: readonly string[]
+): string | undefined {
+    const wanted = normalizeLocale(configuredDefault);
+    return detectedLocales.includes(wanted) ? wanted : detectedLocales[0];
+}
+
 /** Values used when neither pubspec.yaml nor VS Code settings supply one. */
 export const DEFAULT_CONFIG: Required<PubspecConfig> = {
     enabled: true,
@@ -283,7 +315,7 @@ export function mergeConfigs(
         return vscodeConfig;
     }
 
-    return {
+    const result = {
         enabled: pubspecConfig.enabled,
         className: pubspecConfig.className ?? vscodeConfig.className,
         outputPath: pubspecConfig.outputDir ?? vscodeConfig.outputPath,
@@ -297,4 +329,7 @@ export function mergeConfigs(
         logLevel: pubspecConfig.logLevel ?? vscodeConfig.logLevel,
         moduleAccess: pubspecConfig.moduleAccess ?? vscodeConfig.moduleAccess,
     };
+    // Normalised last, so whichever source won still ends up canonical.
+    result.defaultLocale = normalizeLocale(result.defaultLocale);
+    return result;
 }
